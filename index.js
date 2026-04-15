@@ -17,6 +17,11 @@ app.get('/', (req, res) => {
   res.sendFile(__dirname + '/demo.html');
 });
 
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Ver inventario
 app.get('/autos', async (req, res) => {
   try {
