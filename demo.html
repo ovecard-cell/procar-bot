@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Demo — Agente Procar</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f0f2f5;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+
+    .chat-container {
+      width: 420px;
+      height: 680px;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .chat-header {
+      background: #1a1a2e;
+      color: white;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .avatar {
+      width: 42px;
+      height: 42px;
+      background: #e63946;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 18px;
+    }
+
+    .header-info h3 { font-size: 16px; }
+    .header-info span { font-size: 12px; color: #aaa; }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .mensaje {
+      max-width: 80%;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .mensaje.tito {
+      background: #f1f1f1;
+      align-self: flex-start;
+      border-bottom-left-radius: 4px;
+    }
+
+    .mensaje.yo {
+      background: #1a1a2e;
+      color: white;
+      align-self: flex-end;
+      border-bottom-right-radius: 4px;
+    }
+
+    .mensaje.pensando {
+      background: #f1f1f1;
+      align-self: flex-start;
+      color: #999;
+      font-style: italic;
+    }
+
+    .chat-input {
+      padding: 12px 16px;
+      border-top: 1px solid #eee;
+      display: flex;
+      gap: 8px;
+    }
+
+    .chat-input input {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1px solid #ddd;
+      border-radius: 24px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    .chat-input input:focus {
+      border-color: #1a1a2e;
+    }
+
+    .chat-input button {
+      background: #e63946;
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      cursor: pointer;
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .chat-input button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+
+<div class="chat-container">
+  <div class="chat-header">
+    <div class="avatar">T</div>
+    <div class="header-info">
+      <h3>Tito — Procar</h3>
+      <span>Agente de ventas · Corrientes</span>
+    </div>
+  </div>
+
+  <div class="chat-messages" id="mensajes">
+    <div class="mensaje tito">¡Buenas! Soy Tito, de Procar. ¿En qué te puedo ayudar?</div>
+  </div>
+
+  <div class="chat-input">
+    <input type="text" id="inputMensaje" placeholder="Escribí tu mensaje..." />
+    <button id="btnEnviar">➤</button>
+  </div>
+</div>
+
+<script>
+  const telefono = 'demo-' + Math.random().toString(36).slice(2, 8);
+  const mensajes = document.getElementById('mensajes');
+  const input = document.getElementById('inputMensaje');
+  const btn = document.getElementById('btnEnviar');
+
+  function agregarMensaje(texto, tipo) {
+    const div = document.createElement('div');
+    div.className = `mensaje ${tipo}`;
+    div.textContent = texto;
+    mensajes.appendChild(div);
+    mensajes.scrollTop = mensajes.scrollHeight;
+    return div;
+  }
+
+  async function enviar() {
+    const texto = input.value.trim();
+    if (!texto) return;
+
+    input.value = '';
+    btn.disabled = true;
+    agregarMensaje(texto, 'yo');
+
+    const pensando = agregarMensaje('Tito está escribiendo...', 'pensando');
+
+    try {
+      const res = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ telefono, mensaje: texto })
+      });
+      const data = await res.json();
+      pensando.remove();
+      agregarMensaje(data.respuesta, 'tito');
+    } catch (err) {
+      pensando.remove();
+      agregarMensaje('Hubo un error. Revisá que el servidor esté corriendo.', 'pensando');
+    }
+
+    btn.disabled = false;
+    input.focus();
+  }
+
+  btn.addEventListener('click', enviar);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') enviar(); });
+</script>
+
+</body>
+</html>
