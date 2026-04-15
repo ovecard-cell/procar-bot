@@ -79,7 +79,7 @@ async function ejecutarHerramienta(nombre, input, telefono) {
   console.log(`[Agente] Usando herramienta: ${nombre}`, input);
 
   if (nombre === 'buscar_autos') {
-    const autos = await buscarAutos(input);
+    const autos = buscarAutos(input);
     if (autos.length === 0) {
       return 'No encontré autos disponibles con esos criterios en este momento.';
     }
@@ -89,7 +89,7 @@ async function ejecutarHerramienta(nombre, input, telefono) {
   }
 
   if (nombre === 'guardar_lead') {
-    const resultado = await guardarLead({ ...input, telefono });
+    const resultado = guardarLead({ ...input, telefono });
     return resultado.mensaje;
   }
 
@@ -106,10 +106,10 @@ async function ejecutarHerramienta(nombre, input, telefono) {
 
 async function procesarMensaje(telefono, mensajeUsuario) {
   // Guardar el mensaje del cliente en la base de datos
-  await guardarMensaje({ telefono, rol: 'user', contenido: mensajeUsuario });
+  guardarMensaje({ telefono, rol: 'user', contenido: mensajeUsuario });
 
   // Obtener historial de la conversación
-  const historial = await obtenerHistorial(telefono);
+  const historial = obtenerHistorial(telefono);
 
   // Construir los mensajes para Claude
   const mensajes = historial.map(m => ({
@@ -174,7 +174,7 @@ Respondé siempre en español, de forma natural y sin exagerar la personalidad c
     .join('');
 
   // Guardar la respuesta del agente en la base de datos
-  await guardarMensaje({ telefono, rol: 'assistant', contenido: textoRespuesta });
+  guardarMensaje({ telefono, rol: 'assistant', contenido: textoRespuesta });
 
   return textoRespuesta;
 }
