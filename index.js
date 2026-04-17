@@ -1,4 +1,9 @@
 require('dotenv').config();
+
+console.log('[DEBUG] WHATSAPP_VERIFY_TOKEN:', process.env.WHATSAPP_VERIFY_TOKEN ? 'CARGADO' : 'UNDEFINED');
+console.log('[DEBUG] META_ACCESS_TOKEN:', process.env.META_ACCESS_TOKEN ? 'CARGADO' : 'UNDEFINED');
+console.log('[DEBUG] ANTHROPIC_API_KEY:', process.env.ANTHROPIC_API_KEY ? 'CARGADO' : 'UNDEFINED');
+
 const express = require('express');
 const { inicializarDB, cargarAutosEjemplo, cargarVendedoresEjemplo } = require('./database');
 const { verificarWebhook, recibirMensaje } = require('./webhook');
