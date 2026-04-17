@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { procesarMensaje } = require('./agente');
+const config = require('./config');
 
 // ─────────────────────────────────────────────
 // VERIFICACIÓN DEL WEBHOOK (Meta lo llama al configurar)
@@ -9,7 +10,7 @@ function verificarWebhook(req, res) {
   const mode      = req.query['hub.mode'];
   const token     = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
-  const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
+  const verifyToken = config.WHATSAPP_VERIFY_TOKEN;
 
   console.log(`[Webhook] Verificación - mode: ${mode}, token recibido: ${token}, token esperado: ${verifyToken}`);
 
@@ -106,7 +107,7 @@ async function enviarWhatsApp(phoneId, destinatario, texto) {
     },
     {
       headers: {
-        Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}`,
+        Authorization: `Bearer ${config.META_ACCESS_TOKEN}`,
         'Content-Type': 'application/json'
       }
     }
@@ -123,7 +124,7 @@ async function enviarInstagram(recipientId, texto) {
     },
     {
       headers: {
-        Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}`,
+        Authorization: `Bearer ${config.META_ACCESS_TOKEN}`,
         'Content-Type': 'application/json'
       }
     }
@@ -140,7 +141,7 @@ async function enviarMessenger(recipientId, texto) {
     },
     {
       headers: {
-        Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}`,
+        Authorization: `Bearer ${config.META_ACCESS_TOKEN}`,
         'Content-Type': 'application/json'
       }
     }

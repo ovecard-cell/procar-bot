@@ -1,4 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const config = require('./config');
 const {
   buscarAutos,
   guardarLead,
@@ -9,7 +10,7 @@ const {
 } = require('./database');
 const { enviarWhatsAppVendedor } = require('./mensajero');
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 
 // ─────────────────────────────────────────────
 // DEFINICIÓN DE HERRAMIENTAS

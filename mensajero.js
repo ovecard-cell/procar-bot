@@ -1,12 +1,11 @@
 const axios = require('axios');
-
-const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+const config = require('./config');
 
 // Enviar WhatsApp a vendedores (escalado)
 async function enviarWhatsAppVendedor(telefono, texto) {
-  const phoneId = process.env.WHATSAPP_PHONE_ID;
+  const phoneId = config.WHATSAPP_PHONE_ID;
   if (!phoneId) {
-    console.error('[Escalado] Falta WHATSAPP_PHONE_ID en las variables de entorno');
+    console.error('[Escalado] Falta WHATSAPP_PHONE_ID en config');
     return;
   }
 
@@ -20,7 +19,7 @@ async function enviarWhatsAppVendedor(telefono, texto) {
     },
     {
       headers: {
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        Authorization: `Bearer ${config.META_ACCESS_TOKEN}`,
         'Content-Type': 'application/json'
       }
     }
