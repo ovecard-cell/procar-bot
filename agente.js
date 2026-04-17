@@ -7,7 +7,7 @@ const {
   obtenerVendedorConMenosAsignaciones,
   crearAsignacion,
 } = require('./database');
-const { enviarWhatsAppVendedor } = require('./webhook');
+const { enviarWhatsAppVendedor } = require('./mensajero');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 

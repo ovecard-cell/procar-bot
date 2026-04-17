@@ -148,30 +148,4 @@ async function enviarMessenger(recipientId, texto) {
   console.log(`[Messenger] Respuesta enviada a ${recipientId}`);
 }
 
-// Función para enviar WhatsApp a vendedores (escalado)
-async function enviarWhatsAppVendedor(telefono, texto) {
-  const phoneId = process.env.WHATSAPP_PHONE_ID;
-  if (!phoneId) {
-    console.error('[Escalado] Falta WHATSAPP_PHONE_ID en .env');
-    return;
-  }
-
-  await axios.post(
-    `https://graph.facebook.com/v19.0/${phoneId}/messages`,
-    {
-      messaging_product: 'whatsapp',
-      to: telefono,
-      type: 'text',
-      text: { body: texto }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    }
-  );
-  console.log(`[Escalado] WhatsApp enviado a vendedor ${telefono}`);
-}
-
-module.exports = { verificarWebhook, recibirMensaje, enviarWhatsAppVendedor };
+module.exports = { verificarWebhook, recibirMensaje };
