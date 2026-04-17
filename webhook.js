@@ -5,7 +5,7 @@ const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
 const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 
 // ─────────────────────────────────────────────
-// VERIFICACIÓN DEL WEBHOOK (Meta lo llama una sola vez al configurar)
+// VERIFICACIÓN DEL WEBHOOK (Meta lo llama al configurar)
 // ─────────────────────────────────────────────
 
 function verificarWebhook(req, res) {
@@ -23,49 +23,79 @@ function verificarWebhook(req, res) {
 }
 
 // ─────────────────────────────────────────────
-// RECIBIR MENSAJES DE WHATSAPP
+// RECIBIR MENSAJES (WhatsApp, Instagram, Messenger)
 // ─────────────────────────────────────────────
 
 async function recibirMensaje(req, res) {
-  // Meta espera un 200 inmediato, si no reintenta el envío
   res.sendStatus(200);
 
   try {
     const body = req.body;
 
-    // Verificar que sea un evento de WhatsApp
-    if (body.object !== 'whatsapp_business_account') return;
+    // ── WhatsApp ──
+    if (body.object === 'whatsapp_business_account') {
+      const entry   = body.entry?.[0];
+      const changes = entry?.changes?.[0];
+      const value   = changes?.value;
+      const mensaje = value?.messages?.[0];
 
-    const entry    = body.entry?.[0];
-    const changes  = entry?.changes?.[0];
-    const value    = changes?.value;
-    const mensaje  = value?.messages?.[0];
+      if (!mensaje || mensaje.type !== 'text') return;
 
-    // Solo procesamos mensajes de texto
-    if (!mensaje || mensaje.type !== 'text') return;
+      const telefono = mensaje.from;
+      const texto    = mensaje.text.body;
+      const phoneId  = value.metadata.phone_number_id;
 
-    const telefono = mensaje.from;           // Número del cliente
-    const texto    = mensaje.text.body;      // Texto del mensaje
-    const phoneId  = value.metadata.phone_number_id;
+      console.log(`[WhatsApp] Mensaje de ${telefono}: ${texto}`);
 
-    console.log(`[WhatsApp] Mensaje de ${telefono}: ${texto}`);
+      const respuesta = await procesarMensaje(telefono, texto, 'whatsapp');
+      await enviarWhatsApp(phoneId, telefono, respuesta);
+      return;
+    }
 
-    // Procesar con el agente de IA
-    const respuesta = await procesarMensaje(telefono, texto);
+    // ── Instagram ──
+    if (body.object === 'instagram') {
+      const entry    = body.entry?.[0];
+      const messaging = entry?.messaging?.[0];
 
-    // Enviar respuesta por WhatsApp
-    await enviarMensaje(phoneId, telefono, respuesta);
+      if (!messaging?.message?.text) return;
+
+      const senderId = messaging.sender.id;
+      const texto    = messaging.message.text;
+
+      console.log(`[Instagram] Mensaje de ${senderId}: ${texto}`);
+
+      const respuesta = await procesarMensaje(senderId, texto, 'instagram');
+      await enviarInstagram(senderId, respuesta);
+      return;
+    }
+
+    // ── Messenger (Facebook / Marketplace) ──
+    if (body.object === 'page') {
+      const entry    = body.entry?.[0];
+      const messaging = entry?.messaging?.[0];
+
+      if (!messaging?.message?.text) return;
+
+      const senderId = messaging.sender.id;
+      const texto    = messaging.message.text;
+
+      console.log(`[Messenger] Mensaje de ${senderId}: ${texto}`);
+
+      const respuesta = await procesarMensaje(senderId, texto, 'messenger');
+      await enviarMessenger(senderId, respuesta);
+      return;
+    }
 
   } catch (err) {
-    console.error('Error procesando mensaje de WhatsApp:', err.message);
+    console.error('Error procesando mensaje:', err.message);
   }
 }
 
 // ─────────────────────────────────────────────
-// ENVIAR MENSAJE POR WHATSAPP
+// ENVIAR MENSAJES POR CADA CANAL
 // ─────────────────────────────────────────────
 
-async function enviarMensaje(phoneId, destinatario, texto) {
+async function enviarWhatsApp(phoneId, destinatario, texto) {
   await axios.post(
     `https://graph.facebook.com/v19.0/${phoneId}/messages`,
     {
@@ -84,4 +114,64 @@ async function enviarMensaje(phoneId, destinatario, texto) {
   console.log(`[WhatsApp] Respuesta enviada a ${destinatario}`);
 }
 
-module.exports = { verificarWebhook, recibirMensaje };
+async function enviarInstagram(recipientId, texto) {
+  await axios.post(
+    `https://graph.facebook.com/v19.0/me/messages`,
+    {
+      recipient: { id: recipientId },
+      message: { text: texto }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+  console.log(`[Instagram] Respuesta enviada a ${recipientId}`);
+}
+
+async function enviarMessenger(recipientId, texto) {
+  await axios.post(
+    `https://graph.facebook.com/v19.0/me/messages`,
+    {
+      recipient: { id: recipientId },
+      message: { text: texto }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+  console.log(`[Messenger] Respuesta enviada a ${recipientId}`);
+}
+
+// Función para enviar WhatsApp a vendedores (escalado)
+async function enviarWhatsAppVendedor(telefono, texto) {
+  const phoneId = process.env.WHATSAPP_PHONE_ID;
+  if (!phoneId) {
+    console.error('[Escalado] Falta WHATSAPP_PHONE_ID en .env');
+    return;
+  }
+
+  await axios.post(
+    `https://graph.facebook.com/v19.0/${phoneId}/messages`,
+    {
+      messaging_product: 'whatsapp',
+      to: telefono,
+      type: 'text',
+      text: { body: texto }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+  console.log(`[Escalado] WhatsApp enviado a vendedor ${telefono}`);
+}
+
+module.exports = { verificarWebhook, recibirMensaje, enviarWhatsAppVendedor };
