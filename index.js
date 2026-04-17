@@ -28,5 +28,5 @@ app.get('/webhook', verificarWebhook);
 app.post('/webhook', recibirMensaje);
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Servidor Procar Bot corriendo en puerto ${PORT}`);
+  console.log(`Servidor Procar Bot v1.1 corriendo en puerto ${PORT}`);
 });
