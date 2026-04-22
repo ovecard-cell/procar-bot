@@ -1,4 +1,5 @@
-// Buscar todas las env vars relevantes (Railway debería inyectarlas)
+require('dotenv').config();
+
 const relevantKeys = Object.keys(process.env).filter(k =>
   k.includes('WHATSAPP') || k.includes('META') || k.includes('ANTHROPIC') || k.includes('INSTAGRAM')
 );
