@@ -117,14 +117,14 @@ async function enviarWhatsApp(phoneId, destinatario, texto) {
 
 async function enviarInstagram(recipientId, texto) {
   await axios.post(
-    `https://graph.facebook.com/v19.0/me/messages`,
+    `https://graph.instagram.com/v21.0/me/messages`,
     {
       recipient: { id: recipientId },
       message: { text: texto }
     },
     {
       headers: {
-        Authorization: `Bearer ${config.META_ACCESS_TOKEN}`,
+        Authorization: `Bearer ${config.INSTAGRAM_ACCESS_TOKEN}`,
         'Content-Type': 'application/json'
       }
     }
