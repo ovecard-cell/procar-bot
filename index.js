@@ -1,8 +1,12 @@
-require('dotenv').config();
-
+// Buscar todas las env vars relevantes (Railway debería inyectarlas)
+const relevantKeys = Object.keys(process.env).filter(k =>
+  k.includes('WHATSAPP') || k.includes('META') || k.includes('ANTHROPIC') || k.includes('INSTAGRAM')
+);
+console.log('[DEBUG] Env vars relevantes encontradas:', relevantKeys);
 console.log('[DEBUG] WHATSAPP_VERIFY_TOKEN:', process.env.WHATSAPP_VERIFY_TOKEN ? 'CARGADO' : 'UNDEFINED');
 console.log('[DEBUG] META_ACCESS_TOKEN:', process.env.META_ACCESS_TOKEN ? 'CARGADO' : 'UNDEFINED');
 console.log('[DEBUG] ANTHROPIC_API_KEY:', process.env.ANTHROPIC_API_KEY ? 'CARGADO' : 'UNDEFINED');
+console.log('[DEBUG] INSTAGRAM_ACCESS_TOKEN:', process.env.INSTAGRAM_ACCESS_TOKEN ? 'CARGADO' : 'UNDEFINED');
 
 const express = require('express');
 const { inicializarDB, cargarAutosEjemplo, cargarVendedoresEjemplo } = require('./database');
