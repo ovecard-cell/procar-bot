@@ -194,7 +194,7 @@ app.get('/api/conversaciones', (req, res) => {
 
 app.get('/api/conversacion/:telefono', (req, res) => {
   const { db } = require('./database');
-  const cliente = db.prepare('SELECT nombre, presupuesto, interes FROM clientes WHERE telefono = ?').get(req.params.telefono);
+  const cliente = db.prepare('SELECT nombre, cuil, presupuesto, interes FROM clientes WHERE telefono = ?').get(req.params.telefono);
   const mensajes = db.prepare(`
     SELECT rol, contenido, creado_en
     FROM conversaciones
@@ -208,7 +208,7 @@ app.get('/api/conversacion/:telefono', (req, res) => {
     WHERE a.cliente_telefono = ?
     ORDER BY a.creado_en ASC
   `).all(req.params.telefono);
-  res.json({ nombre: cliente?.nombre, presupuesto: cliente?.presupuesto, interes: cliente?.interes, mensajes, asignaciones });
+  res.json({ nombre: cliente?.nombre, cuil: cliente?.cuil, presupuesto: cliente?.presupuesto, interes: cliente?.interes, mensajes, asignaciones });
 });
 
 app.post('/chat', async (req, res) => {

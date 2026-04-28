@@ -30,6 +30,7 @@ function inicializarDB() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       telefono TEXT UNIQUE NOT NULL,
       nombre TEXT,
+      cuil TEXT,
       presupuesto INTEGER,
       interes TEXT,
       canal TEXT DEFAULT 'whatsapp',
@@ -38,6 +39,11 @@ function inicializarDB() {
       actualizado_en DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Migración: agregar cuil si la tabla ya existía sin esa columna
+  try {
+    db.exec('ALTER TABLE clientes ADD COLUMN cuil TEXT');
+  } catch (e) { /* ya existe */ }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS conversaciones (
@@ -137,17 +143,18 @@ function buscarAutos({ presupuesto_max, combustible, transmision, marca, modelo 
 // CLIENTES / LEADS
 // ─────────────────────────────────────────────
 
-function guardarLead({ telefono, nombre, presupuesto, interes, canal }) {
+function guardarLead({ telefono, nombre, cuil, presupuesto, interes, canal }) {
   db.prepare(`
-    INSERT INTO clientes (telefono, nombre, presupuesto, interes, canal)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO clientes (telefono, nombre, cuil, presupuesto, interes, canal)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(telefono) DO UPDATE SET
       nombre = COALESCE(?, nombre),
+      cuil = COALESCE(?, cuil),
       presupuesto = COALESCE(?, presupuesto),
       interes = COALESCE(?, interes),
       canal = COALESCE(?, canal),
       actualizado_en = CURRENT_TIMESTAMP
-  `).run(telefono, nombre, presupuesto, interes, canal, nombre, presupuesto, interes, canal);
+  `).run(telefono, nombre, cuil, presupuesto, interes, canal, nombre, cuil, presupuesto, interes, canal);
   return { ok: true, mensaje: 'Lead guardado correctamente.' };
 }
 

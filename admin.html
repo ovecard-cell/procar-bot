@@ -243,7 +243,10 @@
     const res = await fetch('/api/conversacion/' + encodeURIComponent(telefono));
     const data = await res.json();
     const cont = document.getElementById('mensajes');
-    document.getElementById('tituloChat').textContent = `Conversación con ${data.nombre || telefono}`;
+    const partes = [`Conversación con ${data.nombre || telefono}`];
+    if (data.cuil) partes.push(`📋 CUIL: ${data.cuil}`);
+    if (data.presupuesto) partes.push(`💰 USD ${data.presupuesto}`);
+    document.getElementById('tituloChat').innerHTML = partes.join(' &nbsp;·&nbsp; ');
 
     if (!data.mensajes || data.mensajes.length === 0) {
       cont.innerHTML = '<div class="selecciona">No hay mensajes</div>';

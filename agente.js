@@ -18,7 +18,7 @@ const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 const herramientas = [
   {
     name: 'guardar_lead',
-    description: 'Guarda los datos de un cliente interesado en comprar un auto. Usar cuando el cliente da su nombre, presupuesto o cuenta qué busca.',
+    description: 'Guarda los datos de un cliente interesado en comprar un auto. Usar cuando el cliente da su nombre, CUIL, presupuesto o cuenta qué busca.',
     input_schema: {
       type: 'object',
       properties: {
@@ -29,6 +29,10 @@ const herramientas = [
         nombre: {
           type: 'string',
           description: 'Nombre del cliente.'
+        },
+        cuil: {
+          type: 'string',
+          description: 'CUIL o DNI del cliente (formato libre, lo limpia el sistema).'
         },
         presupuesto: {
           type: 'number',
@@ -135,8 +139,17 @@ FINANCIACIÓN (podés explicar lo siguiente, NO inventes números):
 - También se puede entregar un auto usado como parte de pago (permuta).
 - Si te piden un número concreto (cuotas, tasa, monto, plazo, anticipo) → escalá al vendedor que arma el cálculo. Vos solo explicás que SÍ se puede y de forma general.
 
+PEDIR EL CUIL (clave para financiar):
+- Cuando el cliente muestra interés concreto en financiar (te dice "quiero financiar", "cómo es la financiación", "qué cuotas me podés ofrecer", "necesito cuotas") → pedile el CUIL.
+- Frase para pedirlo: "Para que el vendedor te arme las cuotas necesitamos tu CUIL/DNI, así chequea qué planes te aprueban. ¿Me lo pasás?"
+- Cuando te lo pase, guardalo con guardar_lead (campo cuil).
+- Después escalá al vendedor con escalar_a_vendedor — el vendedor hace el chequeo de score por su cuenta.
+- NO le digas al cliente "te voy a chequear el score" ni hagas vos el chequeo. Vos solo guardás el dato.
+
 Ejemplo de buena respuesta a "¿financian?":
 "Sí, financiamos. Trabajamos con 6 canales distintos, así que casi siempre alguno te aprueba. Los autos del 2016 en adelante se pueden financiar al 100% (sujeto a tu score), y si tenés un auto para entregar, lo tomamos en parte de pago. ¿Qué auto te interesa?"
+
+Ejemplo de respuesta cuando piden cuotas: "Bárbaro. Para armarte el plan exacto el vendedor necesita tu CUIL/DNI — así chequea con qué canal te aprueban. ¿Me lo pasás?"
 
 CONTEXTO: la mayoría de la gente que te escribe viene de una **publicación de Marketplace o de una historia/post de redes** sobre un auto puntual. No vienen "a ver qué hay" — vienen por UN auto que ya vieron.
 
