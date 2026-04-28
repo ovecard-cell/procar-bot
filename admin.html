@@ -81,7 +81,19 @@
   <div class="stat"><div class="num" id="numMensajes">—</div><div class="label">Mensajes hoy</div></div>
   <div class="stat"><div class="num" id="numClientes">—</div><div class="label">Clientes únicos</div></div>
   <div class="stat"><div class="num" id="numLeads">—</div><div class="label">Leads guardados</div></div>
-  <div class="stat"><div class="num" id="numAsignaciones">—</div><div class="label">Asignaciones a vendedores</div></div>
+  <div class="stat"><div class="num" id="numAsignaciones">—</div><div class="label">Asignaciones</div></div>
+  <div class="stat"><div class="num" id="canalTop" style="font-size:1.4rem">—</div><div class="label">Canal más activo</div></div>
+</div>
+
+<div style="padding: 0 24px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+  <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
+    <h2 style="font-size:0.85rem; padding:0 0 12px 0; background:transparent; border:none;">📊 ACTIVIDAD POR CANAL</h2>
+    <div id="statsCanal">—</div>
+  </div>
+  <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
+    <h2 style="font-size:0.85rem; padding:0 0 12px 0; background:transparent; border:none;">👥 ASIGNACIONES POR VENDEDOR</h2>
+    <div id="statsVendedores">—</div>
+  </div>
 </div>
 
 <div class="layout">
@@ -105,6 +117,46 @@
     document.getElementById('numClientes').textContent = data.clientes_unicos;
     document.getElementById('numLeads').textContent = data.leads;
     document.getElementById('numAsignaciones').textContent = data.asignaciones;
+
+    // Canal más activo
+    const canales = data.por_canal || [];
+    const top = canales.sort((a,b) => b.clientes - a.clientes)[0];
+    document.getElementById('canalTop').textContent = top ? `${iconoCanal(top.canal)} ${top.canal}` : '—';
+
+    // Detalle por canal
+    const statsCanal = document.getElementById('statsCanal');
+    statsCanal.innerHTML = canales.length > 0
+      ? canales.map(c => `
+          <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #2a2a40;">
+            <span>${iconoCanal(c.canal)} <strong>${c.canal}</strong></span>
+            <span style="color:#aaa">${c.clientes} clientes · ${c.mensajes} mensajes</span>
+          </div>
+        `).join('')
+      : '<div style="color:#666;text-align:center;padding:12px">Sin actividad todavía</div>';
+  }
+
+  async function cargarVendedores() {
+    const res = await fetch('/api/asignaciones');
+    const data = await res.json();
+    const cont = document.getElementById('statsVendedores');
+    const v = data.por_vendedor || [];
+    cont.innerHTML = v.length > 0
+      ? v.map(x => `
+          <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #2a2a40;">
+            <span><strong>${escapar(x.nombre)}</strong></span>
+            <span style="color:#aaa">${x.total} total · <span style="color:#f4a261">${x.pendientes||0} pendientes</span> · <span style="color:#2a9d8f">${x.cerrados||0} cerrados</span></span>
+          </div>
+        `).join('')
+      : '<div style="color:#666;text-align:center;padding:12px">Sin asignaciones todavía</div>';
+  }
+
+  function iconoCanal(c) {
+    if (!c) return '';
+    if (c.includes('whatsapp')) return '🟢';
+    if (c.includes('instagram')) return '📷';
+    if (c.includes('messenger') || c.includes('facebook')) return '💬';
+    if (c.includes('demo')) return '🧪';
+    return '📨';
   }
 
   async function cargarEstado() {
@@ -140,7 +192,7 @@
           <span class="canal">${c.canal}</span>
         </div>
         <div class="preview">${escapar(c.preview)}</div>
-        <div class="fecha">${formatearFecha(c.ultimo)}</div>
+        <div class="fecha">${formatearFecha(c.ultimo)}${c.vendedor_asignado ? ` · 👤 <strong style="color:#C9A84C">${escapar(c.vendedor_asignado)}</strong>` : ''}</div>
       </div>
     `).join('');
 
@@ -200,6 +252,7 @@
     cargarStats();
     cargarEstado();
     cargarConversaciones();
+    cargarVendedores();
     if (convActiva) cargarMensajes(convActiva);
   }
 

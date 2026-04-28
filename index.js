@@ -23,9 +23,8 @@ const PORT = process.env.PORT || 3000;
 // Parsear JSON de los webhooks de Meta
 app.use(express.json());
 
-// Inicializar base de datos, inventario y vendedores
+// Inicializar base de datos y vendedores (sin autos de ejemplo — Gonzalo escala todo)
 inicializarDB();
-cargarAutosEjemplo();
 cargarVendedoresEjemplo();
 
 // Health check
@@ -55,7 +54,36 @@ app.get('/api/stats', (req, res) => {
   const clientes = db.prepare('SELECT COUNT(DISTINCT telefono) as n FROM conversaciones').get().n;
   const leads = db.prepare('SELECT COUNT(*) as n FROM clientes').get().n;
   const asignaciones = db.prepare('SELECT COUNT(*) as n FROM asignaciones').get().n;
-  res.json({ mensajes_hoy: mensajesHoy, clientes_unicos: clientes, leads, asignaciones });
+  const porCanal = db.prepare(`
+    SELECT canal, COUNT(DISTINCT telefono) as clientes, COUNT(*) as mensajes
+    FROM conversaciones
+    GROUP BY canal
+  `).all();
+  res.json({ mensajes_hoy: mensajesHoy, clientes_unicos: clientes, leads, asignaciones, por_canal: porCanal });
+});
+
+app.get('/api/asignaciones', (req, res) => {
+  const { db } = require('./database');
+  const todas = db.prepare(`
+    SELECT a.id, a.cliente_telefono, a.motivo, a.estado, a.creado_en,
+           v.nombre as vendedor, v.telefono as vendedor_telefono,
+           cl.nombre as cliente_nombre
+    FROM asignaciones a
+    JOIN vendedores v ON v.id = a.vendedor_id
+    LEFT JOIN clientes cl ON cl.telefono = a.cliente_telefono
+    ORDER BY a.creado_en DESC
+    LIMIT 50
+  `).all();
+  const porVendedor = db.prepare(`
+    SELECT v.nombre, COUNT(a.id) as total,
+           SUM(CASE WHEN a.estado = 'pendiente' THEN 1 ELSE 0 END) as pendientes,
+           SUM(CASE WHEN a.estado = 'cerrado' THEN 1 ELSE 0 END) as cerrados
+    FROM vendedores v
+    LEFT JOIN asignaciones a ON a.vendedor_id = v.id
+    GROUP BY v.id
+    ORDER BY total DESC
+  `).all();
+  res.json({ asignaciones: todas, por_vendedor: porVendedor });
 });
 
 app.get('/api/estado', (req, res) => {
@@ -67,7 +95,9 @@ app.get('/api/conversaciones', (req, res) => {
   const rows = db.prepare(`
     SELECT c.telefono, c.canal, MAX(c.creado_en) as ultimo,
            cl.nombre,
-           (SELECT contenido FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as preview
+           (SELECT contenido FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as preview,
+           (SELECT v.nombre FROM asignaciones a JOIN vendedores v ON v.id = a.vendedor_id
+            WHERE a.cliente_telefono = c.telefono ORDER BY a.creado_en DESC LIMIT 1) as vendedor_asignado
     FROM conversaciones c
     LEFT JOIN clientes cl ON cl.telefono = c.telefono
     GROUP BY c.telefono
