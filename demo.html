@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Demo — Agente Procar</title>
+  <title>Demo — Gonzalo Procar</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -133,15 +133,15 @@
 
 <div class="chat-container">
   <div class="chat-header">
-    <div class="avatar">T</div>
+    <div class="avatar">G</div>
     <div class="header-info">
-      <h3>Tito — Procar</h3>
+      <h3>Gonzalo — Procar</h3>
       <span>Agente de ventas · Corrientes</span>
     </div>
   </div>
 
   <div class="chat-messages" id="mensajes">
-    <div class="mensaje tito">¡Buenas! Soy Tito, de Procar. ¿En qué te puedo ayudar?</div>
+    <div class="mensaje tito">¡Buenas! Soy Gonzalo, de Procar. ¿En qué te puedo ayudar?</div>
   </div>
 
   <div class="chat-input">
@@ -173,7 +173,7 @@
     btn.disabled = true;
     agregarMensaje(texto, 'yo');
 
-    const pensando = agregarMensaje('Tito está escribiendo...', 'pensando');
+    const pensando = agregarMensaje('Gonzalo está escribiendo...', 'pensando');
 
     try {
       const res = await fetch('/chat', {
