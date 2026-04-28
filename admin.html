@@ -51,6 +51,7 @@
   .msg.assistant .meta { color: rgba(0,0,0,0.5); }
 
   .selecciona { display: flex; align-items: center; justify-content: center; height: 100%; color: #666; flex: 1; }
+  .evento-escalado { align-self: center; background: #C9A84C; color: #1a1a2e; padding: 8px 14px; border-radius: 16px; font-size: 0.82rem; font-weight: 700; margin: 8px 0; }
 
   .actualizar { margin-left: auto; background: transparent; border: 1px solid #555; color: #aaa; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; }
   .actualizar:hover { border-color: #C9A84C; color: #C9A84C; }
@@ -85,7 +86,7 @@
   <div class="stat"><div class="num" id="canalTop" style="font-size:1.4rem">—</div><div class="label">Canal más activo</div></div>
 </div>
 
-<div style="padding: 0 24px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+<div style="padding: 0 24px 16px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;">
   <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
     <h2 style="font-size:0.85rem; padding:0 0 12px 0; background:transparent; border:none;">📊 ACTIVIDAD POR CANAL</h2>
     <div id="statsCanal">—</div>
@@ -93,6 +94,10 @@
   <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
     <h2 style="font-size:0.85rem; padding:0 0 12px 0; background:transparent; border:none;">👥 ASIGNACIONES POR VENDEDOR</h2>
     <div id="statsVendedores">—</div>
+  </div>
+  <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
+    <h2 style="font-size:0.85rem; padding:0 0 12px 0; background:transparent; border:none;">📤 ÚLTIMOS PASADOS A VENDEDOR</h2>
+    <div id="ultimasAsignaciones">—</div>
   </div>
 </div>
 
@@ -160,6 +165,22 @@
           </div>
         `).join('')
       : '<div style="color:#666;text-align:center;padding:12px">Sin asignaciones todavía</div>';
+
+    // Últimas asignaciones (lista de eventos)
+    const ult = (data.asignaciones || []).slice(0, 8);
+    const contUlt = document.getElementById('ultimasAsignaciones');
+    contUlt.innerHTML = ult.length > 0
+      ? ult.map(a => `
+          <div style="padding:8px 0; border-bottom:1px solid #2a2a40;">
+            <div style="display:flex; justify-content:space-between;">
+              <span><strong style="color:#C9A84C">→ ${escapar(a.vendedor)}</strong></span>
+              <span style="color:#666; font-size:0.75rem">${formatearFecha(a.creado_en)}</span>
+            </div>
+            <div style="font-size:0.82rem; color:#aaa; margin-top:2px;">${escapar(a.cliente_nombre || a.cliente_telefono)}</div>
+            ${a.motivo ? `<div style="font-size:0.75rem; color:#888; margin-top:2px; font-style:italic;">${escapar(a.motivo)}</div>` : ''}
+          </div>
+        `).join('')
+      : '<div style="color:#666;text-align:center;padding:12px">Cuando Gonzalo pase un cliente,<br>aparece acá en vivo</div>';
   }
 
   function iconoCanal(c) {
@@ -229,12 +250,18 @@
       return;
     }
 
-    cont.innerHTML = data.mensajes.map(m => `
-      <div class="msg ${m.rol}">
-        ${escapar(m.contenido)}
-        <div class="meta">${formatearFecha(m.creado_en)}</div>
-      </div>
-    `).join('');
+    // Combinar mensajes y eventos de escalado en orden cronológico
+    const eventos = [
+      ...data.mensajes.map(m => ({ tipo: 'msg', ...m })),
+      ...(data.asignaciones || []).map(a => ({ tipo: 'escalado', ...a })),
+    ].sort((a, b) => new Date(a.creado_en) - new Date(b.creado_en));
+
+    cont.innerHTML = eventos.map(e => {
+      if (e.tipo === 'escalado') {
+        return `<div class="evento-escalado">📤 Pasado a ${escapar(e.vendedor)} · ${formatearFecha(e.creado_en)}${e.motivo ? `<div style="font-weight:400;font-size:0.75rem;margin-top:4px;color:#1a1a2e">${escapar(e.motivo)}</div>` : ''}</div>`;
+      }
+      return `<div class="msg ${e.rol}">${escapar(e.contenido)}<div class="meta">${formatearFecha(e.creado_en)}</div></div>`;
+    }).join('');
     cont.scrollTop = cont.scrollHeight;
   }
 

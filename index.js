@@ -167,7 +167,14 @@ app.get('/api/conversacion/:telefono', (req, res) => {
     WHERE telefono = ?
     ORDER BY creado_en ASC
   `).all(req.params.telefono);
-  res.json({ nombre: cliente?.nombre, presupuesto: cliente?.presupuesto, interes: cliente?.interes, mensajes });
+  const asignaciones = db.prepare(`
+    SELECT a.motivo, a.creado_en, v.nombre as vendedor
+    FROM asignaciones a
+    JOIN vendedores v ON v.id = a.vendedor_id
+    WHERE a.cliente_telefono = ?
+    ORDER BY a.creado_en ASC
+  `).all(req.params.telefono);
+  res.json({ nombre: cliente?.nombre, presupuesto: cliente?.presupuesto, interes: cliente?.interes, mensajes, asignaciones });
 });
 
 app.post('/chat', async (req, res) => {
