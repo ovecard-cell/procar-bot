@@ -1,6 +1,6 @@
-const axios = require('axios');
 const Anthropic = require('@anthropic-ai/sdk');
 const config = require('./config');
+const { db } = require('./database');
 
 const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 
@@ -29,55 +29,45 @@ Devolvé SOLO un JSON, sin markdown, sin explicaciones:
 }`;
 
 // ─────────────────────────────────────────────
-// META API
+// LECTURA DE CONVERSACIONES DESDE DB LOCAL
 // ─────────────────────────────────────────────
 
-async function obtenerPaginas() {
-  const res = await axios.get(
-    `https://graph.facebook.com/v19.0/me/accounts`,
-    { params: { access_token: config.META_ACCESS_TOKEN } }
-  );
-  return res.data.data || [];
-}
+function obtenerConversacionesDB(desde) {
+  // Cada cliente único que tuvo actividad desde `desde`
+  const clientes = db.prepare(`
+    SELECT telefono, canal, MAX(creado_en) as ultimo_mensaje
+    FROM conversaciones
+    WHERE creado_en >= ?
+    GROUP BY telefono
+    ORDER BY ultimo_mensaje DESC
+  `).all(desde.toISOString());
 
-async function obtenerConversacionesPagina(pageId, pageToken, plataforma) {
-  const params = {
-    fields: 'participants,updated_time,messages.limit(20){message,from,created_time}',
-    access_token: pageToken,
-    limit: 50,
-  };
-  if (plataforma === 'instagram') params.platform = 'instagram';
-
-  const res = await axios.get(
-    `https://graph.facebook.com/v19.0/${pageId}/conversations`,
-    { params }
-  );
-  return res.data.data || [];
-}
-
-async function obtenerIgIdDePagina(pageId, pageToken) {
-  const res = await axios.get(
-    `https://graph.facebook.com/v19.0/${pageId}`,
-    { params: { fields: 'instagram_business_account', access_token: pageToken } }
-  );
-  return res.data.instagram_business_account?.id || null;
+  // Para cada cliente, traer su historial completo
+  return clientes.map(c => {
+    const mensajes = db.prepare(`
+      SELECT rol, contenido, canal, creado_en
+      FROM conversaciones
+      WHERE telefono = ?
+      ORDER BY creado_en ASC
+    `).all(c.telefono);
+    return { telefono: c.telefono, canal: c.canal, ultimo_mensaje: c.ultimo_mensaje, mensajes };
+  });
 }
 
 // ─────────────────────────────────────────────
 // CLASIFICACIÓN CON CLAUDE
 // ─────────────────────────────────────────────
 
-async function clasificarConversacion(conv, canal) {
-  const mensajes = (conv.messages?.data || []).slice().reverse();
-  if (mensajes.length === 0) return null;
+async function clasificarConversacion(conv) {
+  if (!conv.mensajes || conv.mensajes.length === 0) return null;
 
-  const historial = mensajes
-    .map(m => `${m.from?.name || 'Desconocido'}: ${m.message || '[sin texto]'}`)
+  const historial = conv.mensajes
+    .map(m => `${m.rol === 'user' ? 'Cliente' : 'Procar'}: ${m.contenido}`)
     .join('\n');
 
   const res = await client.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: 256,
+    max_tokens: 384,
     system: PROMPT_CLASIFICACION,
     messages: [{ role: 'user', content: historial }],
   });
@@ -91,12 +81,14 @@ async function clasificarConversacion(conv, canal) {
     analisis = { categoria: 'error', motivo: texto.slice(0, 200), sugerencia: '' };
   }
 
+  const ultimoCliente = [...conv.mensajes].reverse().find(m => m.rol === 'user');
+
   return {
-    canal,
-    conversacion_id: conv.id,
-    participantes: conv.participants?.data?.map(p => p.name).filter(Boolean).join(', ') || 'sin nombre',
-    actualizado: conv.updated_time,
-    ultimo_mensaje: mensajes[mensajes.length - 1]?.message || '',
+    canal: conv.canal,
+    conversacion_id: conv.telefono,
+    participantes: conv.telefono,
+    actualizado: conv.ultimo_mensaje,
+    ultimo_mensaje: ultimoCliente?.contenido || '',
     historial,
     ...analisis,
   };
@@ -110,43 +102,18 @@ async function analizar(desde) {
   const resultados = [];
   const errores = [];
 
-  let paginas;
-  try {
-    paginas = await obtenerPaginas();
-  } catch (err) {
-    throw new Error(`No se pudieron obtener las páginas: ${err.response?.data?.error?.message || err.message}`);
+  const conversaciones = obtenerConversacionesDB(desde);
+
+  if (conversaciones.length === 0) {
+    return { resultados: [], errores: ['No hay conversaciones en la base local desde la fecha indicada. La DB local solo tiene mensajes que el bot recibió por webhook desde que está activo.'] };
   }
 
-  if (paginas.length === 0) {
-    throw new Error('El token no tiene acceso a ninguna página de Facebook. Verificá que el META_ACCESS_TOKEN tenga permisos pages_messaging y pages_show_list.');
-  }
-
-  for (const page of paginas) {
-    // Facebook conversations
+  for (const conv of conversaciones) {
     try {
-      const convs = await obtenerConversacionesPagina(page.id, page.access_token, 'facebook');
-      const recientes = convs.filter(c => new Date(c.updated_time) >= desde);
-      for (const c of recientes) {
-        const r = await clasificarConversacion(c, `facebook:${page.name}`);
-        if (r) resultados.push(r);
-      }
+      const r = await clasificarConversacion(conv);
+      if (r) resultados.push(r);
     } catch (err) {
-      errores.push(`FB ${page.name}: ${err.response?.data?.error?.message || err.message}`);
-    }
-
-    // Instagram (si la página tiene IG conectado)
-    try {
-      const igId = await obtenerIgIdDePagina(page.id, page.access_token);
-      if (igId) {
-        const convs = await obtenerConversacionesPagina(igId, page.access_token, 'instagram');
-        const recientes = convs.filter(c => new Date(c.updated_time) >= desde);
-        for (const c of recientes) {
-          const r = await clasificarConversacion(c, `instagram:${page.name}`);
-          if (r) resultados.push(r);
-        }
-      }
-    } catch (err) {
-      errores.push(`IG ${page.name}: ${err.response?.data?.error?.message || err.message}`);
+      errores.push(`Cliente ${conv.telefono}: ${err.message}`);
     }
   }
 
