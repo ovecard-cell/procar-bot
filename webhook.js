@@ -44,14 +44,27 @@ async function validarToken() {
   }
 
   try {
-    const res = await axios.get(`https://graph.facebook.com/v19.0/me`, {
-      params: { access_token: config.META_ACCESS_TOKEN },
+    const res = await axios.get(`https://graph.facebook.com/me`, {
+      params: { access_token: config.META_ACCESS_TOKEN, fields: 'id,name' },
     });
     console.log(`[STARTUP] Token de Meta válido. Identidad: ${res.data.name || res.data.id}`);
     return true;
   } catch (err) {
-    describirErrorMeta(err, 'validarToken');
-    return false;
+    const status = err.response?.status;
+    const errorMeta = err.response?.data?.error || {};
+
+    // Solo 401 o code 190 indica token realmente inválido o expirado.
+    // Cualquier otro error (incluido 400 con code 100 por permisos faltantes
+    // en modo desarrollo) significa que el token es estructuralmente válido.
+    if (status === 401 || errorMeta.code === 190) {
+      console.error(`[ERROR] Token de Meta inválido o expirado — renovar META_ACCESS_TOKEN`);
+      console.error(`        Detalle: ${errorMeta.message || err.message}`);
+      return false;
+    }
+
+    console.warn(`[STARTUP] Token de Meta presente, no se pudo validar identidad (HTTP ${status || '?'}): ${errorMeta.message || err.message}`);
+    console.warn(`          Esto es normal en modo desarrollo. El bot va a intentar enviar mensajes igual.`);
+    return true;
   }
 }
 
