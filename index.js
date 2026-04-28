@@ -598,6 +598,26 @@ app.post('/api/setup-routing', (req, res) => {
   res.json({ ok: true, mensaje: 'Routing configurado: Tiki+Facu en redes, Antonio+Gustavo en WhatsApp' });
 });
 
+// Reset de contraseñas a las defaults (admin) — útil para arrancar
+app.get('/api/admin/reset-passwords', (req, res) => {
+  const { db } = require('./database');
+  const vendedores = db.prepare('SELECT id, nombre FROM vendedores').all();
+  const reseteados = [];
+  for (const v of vendedores) {
+    const passDefault = v.nombre.toLowerCase() + '1234';
+    db.prepare('UPDATE vendedores SET password = ? WHERE id = ?').run(passDefault, v.id);
+    reseteados.push({ nombre: v.nombre, password: passDefault });
+  }
+  res.json({ ok: true, reseteados });
+});
+
+// Listar passwords actuales (solo para debug del admin)
+app.get('/api/admin/passwords', (req, res) => {
+  const { db } = require('./database');
+  const vendedores = db.prepare('SELECT nombre, password FROM vendedores').all();
+  res.json(vendedores);
+});
+
 // Activar/pausar un vendedor (no recibe leads nuevos si está pausado)
 app.post('/api/vendedor/:nombre/toggle', (req, res) => {
   const { db } = require('./database');
