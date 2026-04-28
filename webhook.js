@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { procesarMensaje } = require('./agente');
+const { getSetting } = require('./database');
 const config = require('./config');
 
 // ─────────────────────────────────────────────
@@ -95,6 +96,13 @@ function verificarWebhook(req, res) {
 
 async function recibirMensaje(req, res) {
   res.sendStatus(200);
+
+  // Si el agente está pausado, registramos el mensaje pero no respondemos
+  const agenteActivo = getSetting('agente_activo', 'true') === 'true';
+  if (!agenteActivo) {
+    console.log('[Webhook] Agente pausado — mensaje recibido pero NO se responde');
+    return;
+  }
 
   try {
     const body = req.body;

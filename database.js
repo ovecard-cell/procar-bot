@@ -74,7 +74,30 @@ function inicializarDB() {
     )
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    )
+  `);
+
   console.log('Tablas verificadas correctamente.');
+}
+
+// ─────────────────────────────────────────────
+// SETTINGS GLOBALES
+// ─────────────────────────────────────────────
+
+function getSetting(key, defaultValue = null) {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  return row ? row.value : defaultValue;
+}
+
+function setSetting(key, value) {
+  db.prepare(`
+    INSERT INTO settings (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = ?
+  `).run(key, String(value), String(value));
 }
 
 // ─────────────────────────────────────────────
@@ -267,4 +290,6 @@ module.exports = {
   obtenerAsignacionesPendientes,
   actualizarAsignacion,
   marcarSeguimientoEnviado,
+  getSetting,
+  setSetting,
 };

@@ -13,8 +13,20 @@ Te paso una conversación entre un cliente y la agencia (Instagram o Facebook). 
 - "atendido": ya hubo conversación completa, le respondieron bien y se cerró el tema (compró, no le interesó, etc).
 - "spam": mensajes irrelevantes, ofertas, vendedores, no son potenciales clientes.
 
+Además identificá:
+- "auto_interes": qué auto está mirando o preguntando el cliente (marca + modelo + año si lo dice). Si no lo menciona, devolvé "no especificó".
+- "presupuesto": presupuesto que mencionó el cliente, en USD si dice dólares o ARS si dice pesos. Si no lo dice, devolvé "no mencionó".
+- "etapa_funnel": en qué punto del proceso de venta está. Opciones: "pregunta_general", "consulta_precio", "pregunta_financiacion", "pide_fotos", "quiere_ver_en_persona", "ofrece_usado_parte_pago", "negociando_precio", "listo_para_cerrar".
+
 Devolvé SOLO un JSON, sin markdown, sin explicaciones:
-{"categoria": "caliente|tibio|atendido|spam", "motivo": "una frase corta explicando por qué", "sugerencia": "qué le respondería para reactivarlo (vacío si es atendido o spam)"}`;
+{
+  "categoria": "caliente|tibio|atendido|spam",
+  "auto_interes": "Marca Modelo Año o 'no especificó'",
+  "presupuesto": "USD 15000 o ARS 5000000 o 'no mencionó'",
+  "etapa_funnel": "una de las opciones",
+  "motivo": "una frase corta explicando la clasificación",
+  "sugerencia": "qué decirle al cliente para reactivarlo (vacío si atendido o spam)"
+}`;
 
 // ─────────────────────────────────────────────
 // META API
@@ -167,6 +179,9 @@ function generarHTML({ resultados, errores }, desde) {
       <td><span class="badge" style="background:${colores[r.categoria]}">${r.categoria.toUpperCase()}</span></td>
       <td>${r.canal}</td>
       <td>${r.participantes}</td>
+      <td><strong>${escapar(r.auto_interes || '—')}</strong></td>
+      <td>${escapar(r.presupuesto || '—')}</td>
+      <td>${escapar((r.etapa_funnel || '').replace(/_/g, ' '))}</td>
       <td>${new Date(r.actualizado).toLocaleString('es-AR')}</td>
       <td class="msg">${escapar(r.ultimo_mensaje).slice(0, 120)}</td>
       <td>${escapar(r.motivo)}</td>
@@ -219,6 +234,9 @@ function generarHTML({ resultados, errores }, desde) {
         <th>Categoría</th>
         <th>Canal</th>
         <th>Cliente</th>
+        <th>🚗 Auto de interés</th>
+        <th>💰 Presupuesto</th>
+        <th>📍 Etapa</th>
         <th>Última act.</th>
         <th>Último mensaje</th>
         <th>Motivo</th>

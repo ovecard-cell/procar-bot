@@ -11,7 +11,7 @@ console.log('[DEBUG] INSTAGRAM_ACCESS_TOKEN:', process.env.INSTAGRAM_ACCESS_TOKE
 
 const express = require('express');
 const path = require('path');
-const { inicializarDB, cargarAutosEjemplo, cargarVendedoresEjemplo } = require('./database');
+const { inicializarDB, cargarAutosEjemplo, cargarVendedoresEjemplo, getSetting, setSetting } = require('./database');
 const { verificarWebhook, recibirMensaje, validarToken } = require('./webhook');
 const { procesarMensaje } = require('./agente');
 const { analizar, generarHTML } = require('./analizar');
@@ -63,6 +63,33 @@ app.get('/analizar', async (req, res) => {
     console.error('[Analizar] Error:', err.message);
     res.status(500).send(`<pre style="padding:24px;font-family:monospace">Error: ${err.message}</pre>`);
   }
+});
+
+// Pausar / activar el agente
+app.get('/agente/estado', (req, res) => {
+  const activo = getSetting('agente_activo', 'true') === 'true';
+  res.send(`
+    <html><body style="font-family:sans-serif;padding:24px">
+      <h1>Agente Gonzalo</h1>
+      <p>Estado actual: <strong style="color:${activo ? 'green' : 'red'}">${activo ? '🟢 ACTIVO' : '🔴 PAUSADO'}</strong></p>
+      ${activo
+        ? '<a href="/agente/pausar" style="background:#e63946;color:white;padding:12px 24px;border-radius:6px;text-decoration:none">PAUSAR (no responder más)</a>'
+        : '<a href="/agente/activar" style="background:#2a9d8f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none">ACTIVAR (volver a responder)</a>'
+      }
+    </body></html>
+  `);
+});
+
+app.get('/agente/pausar', (req, res) => {
+  setSetting('agente_activo', 'false');
+  console.log('[Agente] PAUSADO desde el panel');
+  res.redirect('/agente/estado');
+});
+
+app.get('/agente/activar', (req, res) => {
+  setSetting('agente_activo', 'true');
+  console.log('[Agente] ACTIVADO desde el panel');
+  res.redirect('/agente/estado');
 });
 
 // Webhook de Meta (WhatsApp + Instagram + Messenger)
