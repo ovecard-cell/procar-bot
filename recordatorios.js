@@ -17,7 +17,7 @@ const CADENCIA = [
   {
     tipo: '18h',
     horas: 18,
-    texto: 'Por si quedaste a medias o se te complicó el día, te dejo el WhatsApp: +54 9 379 487-4815. Cuando puedas retomamos por donde te quede más cómodo.',
+    texto: 'Quedo atento por si querés retomar. Acá o por el WhatsApp que te pasé, lo que te quede más cómodo.',
   },
 ];
 
