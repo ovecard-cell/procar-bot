@@ -1,11 +1,25 @@
 const cron = require('node-cron');
 const { db, getSetting } = require('./database');
 
-// Texto del primer recordatorio (24hs sin respuesta)
-const TEXTO_24H = '¡Che! ¿Pudiste ver lo que te pasé? Si tenés alguna duda escribime por acá, o si querés te paso al vendedor para coordinar algo.';
-
-// Texto del segundo y último recordatorio (72hs sin respuesta)
-const TEXTO_72H = 'Te dejo el WhatsApp de la agencia por las dudas: +54 9 379 487-4815. Cuando puedas retomar la conversación, escribime acá o por WhatsApp. ¡Saludos!';
+// Cadencia de recuperación — todo dentro de la ventana de 24hs de Meta
+// Cada mensaje suma algo nuevo, no repite "te recuerdo"
+const CADENCIA = [
+  {
+    tipo: '2h',
+    horas: 2,
+    texto: 'Che, ¿pudiste ver lo que te pasé? Cualquier duda decime.',
+  },
+  {
+    tipo: '6h',
+    horas: 6,
+    texto: 'Si te interesa el auto, podemos ver tema financiación o si tenés algo para entregar en parte de pago. Avisame.',
+  },
+  {
+    tipo: '18h',
+    horas: 18,
+    texto: 'Tengo varios preguntando por este auto. Si querés cerrar algo decime, o si preferís te paso por WhatsApp: +54 9 379 487-4815.',
+  },
+];
 
 // Quién manda el recordatorio según el canal
 async function enviarRecordatorio(cliente, texto) {
@@ -35,7 +49,7 @@ async function enviarRecordatorio(cliente, texto) {
   }
 }
 
-// Lógica principal: encontrar conversaciones colgadas y mandar recordatorio
+// Lógica principal: encontrar conversaciones colgadas y mandar el siguiente recordatorio según la cadencia
 async function procesarRecordatorios() {
   // Si el agente está pausado, no mandamos recordatorios tampoco
   if (getSetting('agente_activo', 'true') !== 'true') {
@@ -46,8 +60,6 @@ async function procesarRecordatorios() {
   const ahora = Date.now();
   const HORA = 60 * 60 * 1000;
 
-  // Buscar todas las conversaciones cuyo último mensaje fue del bot (assistant)
-  // y agrupar por telefono
   const candidatos = db.prepare(`
     SELECT c.telefono, c.canal,
            MAX(c.creado_en) as ultimo_msg,
@@ -63,35 +75,30 @@ async function procesarRecordatorios() {
     if (c.ultimo_rol !== 'assistant') continue;
 
     const horasSinRespuesta = (ahora - new Date(c.ultimo_msg).getTime()) / HORA;
+    // Después de 23hs ya no mandamos nada (ventana de 24hs de Meta)
+    if (horasSinRespuesta >= 23) continue;
+
     const ultimoRec = c.ultimo_recordatorio ? JSON.parse(c.ultimo_recordatorio) : null;
+    const ultimoTipo = ultimoRec?.tipo || null;
 
-    let texto = null;
+    // Encontrar el siguiente paso de la cadencia que corresponde según horas y último enviado
+    const siguiente = CADENCIA.find(p =>
+      horasSinRespuesta >= p.horas && (ultimoTipo === null || CADENCIA.findIndex(x => x.tipo === ultimoTipo) < CADENCIA.findIndex(x => x.tipo === p.tipo))
+    );
 
-    // Primer recordatorio a las 24hs
-    if (horasSinRespuesta >= 24 && (!ultimoRec || ultimoRec.tipo !== '24h')) {
-      texto = TEXTO_24H;
-    }
-    // Segundo recordatorio a las 72hs (3 días)
-    else if (horasSinRespuesta >= 72 && ultimoRec?.tipo === '24h') {
-      texto = TEXTO_72H;
-    }
-
-    if (!texto) continue;
+    if (!siguiente) continue;
 
     try {
-      await enviarRecordatorio(c, texto);
-      // Guardar el mensaje en la DB
+      await enviarRecordatorio(c, siguiente.texto);
       db.prepare('INSERT INTO conversaciones (telefono, rol, contenido, canal) VALUES (?, ?, ?, ?)')
-        .run(c.telefono, 'assistant', texto, c.canal);
-      // Marcar el recordatorio enviado
-      const tipo = (ultimoRec?.tipo === '24h') ? '72h' : '24h';
+        .run(c.telefono, 'assistant', siguiente.texto, c.canal);
+      const valor = JSON.stringify({ tipo: siguiente.tipo, fecha: new Date().toISOString() });
       db.prepare(`
         INSERT INTO settings (key, value) VALUES (?, ?)
         ON CONFLICT(key) DO UPDATE SET value = ?
-      `).run(`recordatorio_${c.telefono}`, JSON.stringify({ tipo, fecha: new Date().toISOString() }),
-              JSON.stringify({ tipo, fecha: new Date().toISOString() }));
+      `).run(`recordatorio_${c.telefono}`, valor, valor);
       enviados++;
-      console.log(`[Recordatorios] ${tipo} enviado a ${c.telefono} (${c.canal}, ${horasSinRespuesta.toFixed(1)}hs)`);
+      console.log(`[Recordatorios] ${siguiente.tipo} enviado a ${c.telefono} (${c.canal}, ${horasSinRespuesta.toFixed(1)}hs)`);
     } catch (err) {
       errores++;
       console.error(`[Recordatorios] Error con ${c.telefono}:`, err.response?.data?.error?.message || err.message);
@@ -109,11 +116,11 @@ function limpiarRecordatorios(telefono) {
 }
 
 function iniciarCron() {
-  // Cada 30 minutos
-  cron.schedule('*/30 * * * *', () => {
+  // Cada 15 minutos para reaccionar más rápido a los pasos de 2h/6h/18h
+  cron.schedule('*/15 * * * *', () => {
     procesarRecordatorios().catch(err => console.error('[Recordatorios] Crash:', err.message));
   });
-  console.log('[Recordatorios] Cron iniciado (cada 30 min)');
+  console.log('[Recordatorios] Cron iniciado (cada 15 min, cadencia 2h/6h/18h)');
 }
 
 module.exports = { iniciarCron, procesarRecordatorios, limpiarRecordatorios };
