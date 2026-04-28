@@ -327,4 +327,6 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Servidor Procar Bot v1.1 corriendo en puerto ${PORT}`);
   // Validar token de Meta al arrancar (no bloquea el servidor)
   validarToken().catch(() => {});
+  // Iniciar cron de recordatorios (24h y 72h)
+  require('./recordatorios').iniciarCron();
 });

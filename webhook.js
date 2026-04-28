@@ -1,6 +1,7 @@
 const axios = require('axios');
 const { procesarMensaje } = require('./agente');
 const { getSetting } = require('./database');
+const { limpiarRecordatorios } = require('./recordatorios');
 const config = require('./config');
 
 // ─────────────────────────────────────────────
@@ -122,6 +123,7 @@ async function recibirMensaje(req, res) {
 
       console.log(`[WhatsApp] Mensaje de ${telefono}: ${texto}`);
 
+      limpiarRecordatorios(telefono);
       const respuesta = await procesarMensaje(telefono, texto, 'whatsapp');
       await enviarWhatsApp(phoneId, telefono, respuesta);
       return;
@@ -139,6 +141,7 @@ async function recibirMensaje(req, res) {
 
       console.log(`[Instagram] Mensaje de ${senderId}: ${texto}`);
 
+      limpiarRecordatorios(senderId);
       const respuesta = await procesarMensaje(senderId, texto, 'instagram');
       await enviarInstagram(senderId, respuesta);
       return;
@@ -156,6 +159,7 @@ async function recibirMensaje(req, res) {
 
       console.log(`[Messenger] Mensaje de ${senderId}: ${texto}`);
 
+      limpiarRecordatorios(senderId);
       const respuesta = await procesarMensaje(senderId, texto, 'messenger');
       await enviarMessenger(senderId, respuesta);
       return;
