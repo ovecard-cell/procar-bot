@@ -359,6 +359,33 @@ app.get('/distribuir', async (req, res) => {
   }
 });
 
+// Info del número de WhatsApp API configurado
+app.get('/api/wa-info', async (req, res) => {
+  try {
+    const config = require('./config');
+    const axios = require('axios');
+    if (!config.WHATSAPP_PHONE_ID) {
+      return res.json({ error: 'WHATSAPP_PHONE_ID no está configurado en Railway' });
+    }
+    const r = await axios.get(`https://graph.facebook.com/v19.0/${config.WHATSAPP_PHONE_ID}`, {
+      params: {
+        fields: 'display_phone_number,verified_name,quality_rating,name_status',
+        access_token: config.META_ACCESS_TOKEN,
+      },
+    });
+    res.json({
+      ok: true,
+      numero: r.data.display_phone_number,
+      nombre_verificado: r.data.verified_name,
+      calidad: r.data.quality_rating,
+      estado: r.data.name_status,
+      phone_id: config.WHATSAPP_PHONE_ID,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+  }
+});
+
 // Test rápido: mandar WhatsApp desde el bot a cualquier número
 app.get('/test-wa', (req, res) => {
   res.send(`
