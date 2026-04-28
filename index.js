@@ -15,6 +15,7 @@ const { inicializarDB, cargarAutosEjemplo, cargarVendedoresEjemplo, getSetting, 
 const { verificarWebhook, recibirMensaje, validarToken } = require('./webhook');
 const { procesarMensaje } = require('./agente');
 const { analizar, generarHTML } = require('./analizar');
+const { distribuirLeads, generarHTMLReporte } = require('./distribuir');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -62,6 +63,19 @@ app.get('/analizar', async (req, res) => {
   } catch (err) {
     console.error('[Analizar] Error:', err.message);
     res.status(500).send(`<pre style="padding:24px;font-family:monospace">Error: ${err.message}</pre>`);
+  }
+});
+
+// Distribuir leads calientes a vendedores por WhatsApp
+app.get('/distribuir', async (req, res) => {
+  try {
+    const desde = new Date(req.query.desde || Date.now() - 7 * 24 * 60 * 60 * 1000);
+    console.log(`[Distribuir] Distribuyendo leads desde ${desde.toISOString()}`);
+    const resultado = await distribuirLeads(desde);
+    res.send(generarHTMLReporte(resultado));
+  } catch (err) {
+    console.error('[Distribuir] Error:', err.message);
+    res.status(500).send(`<pre style="padding:24px">Error: ${err.message}</pre>`);
   }
 });
 
