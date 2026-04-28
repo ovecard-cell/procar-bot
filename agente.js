@@ -49,7 +49,7 @@ const herramientas = [
   },
   {
     name: 'escalar_a_vendedor',
-    description: 'Asigna el cliente a un vendedor real (Antonio, Facu o Tiki) y le avisa por WhatsApp. Usar cuando el cliente quiere cotizar su auto, ver financiación, hacer prueba de manejo, ver el auto en persona, o negociar precio.',
+    description: 'Asigna el cliente a un vendedor real (Antonio, Facu, Tiki o Gustavo) y le avisa por WhatsApp. Usar cuando el cliente quiere cotizar su auto, ver financiación, hacer prueba de manejo, ver el auto en persona, o negociar precio. También usar si el cliente pide hablar con un vendedor específico por nombre.',
     input_schema: {
       type: 'object',
       properties: {
@@ -60,6 +60,10 @@ const herramientas = [
         resumen_cliente: {
           type: 'string',
           description: 'Resumen de lo que hablaste con el cliente: qué busca, presupuesto, nombre si lo dio.'
+        },
+        vendedor_preferido: {
+          type: 'string',
+          description: 'Si el cliente pidió un vendedor específico por nombre (Antonio, Facu, Tiki, Gustavo), pasalo acá. Si no, dejalo vacío y el sistema asigna automáticamente.'
         }
       },
       required: ['motivo', 'resumen_cliente']
@@ -80,8 +84,27 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
   }
 
   if (nombre === 'escalar_a_vendedor') {
-    // Elegir al vendedor con menos asignaciones pendientes que maneje este canal
-    const vendedor = obtenerVendedorConMenosAsignaciones(canal);
+    let vendedor = null;
+
+    // Si el cliente pidió un vendedor específico, intentar asignarlo a ese
+    if (input.vendedor_preferido) {
+      const { db } = require('./database');
+      const v = db.prepare(`
+        SELECT * FROM vendedores
+        WHERE LOWER(nombre) = LOWER(?) AND activo = 1
+      `).get(input.vendedor_preferido);
+      if (v) {
+        vendedor = v;
+        console.log(`[Agente] Asignación específica solicitada: ${vendedor.nombre}`);
+      } else {
+        console.log(`[Agente] ${input.vendedor_preferido} no está disponible, asignando otro`);
+      }
+    }
+
+    // Si no hay preferencia o el preferido no está activo, asignar al de menos carga
+    if (!vendedor) {
+      vendedor = obtenerVendedorConMenosAsignaciones(canal);
+    }
 
     if (!vendedor) {
       return 'No hay vendedores disponibles en este momento. El cliente fue registrado y lo contactaremos pronto.';
@@ -204,6 +227,13 @@ CÓMO RESPONDER:
 5. Pregunta por financiación / cotización de usado / prueba de manejo / negociar precio → escalá al vendedor.
 
 6. Si la persona pregunta algo que no entendés bien por errores de tipeo → preguntá amable: "Disculpá, no te entendí bien. ¿Me podés decir de nuevo qué necesitás?"
+
+VENDEDORES DEL EQUIPO (para que sepas a quién mencionar):
+- Antonio
+- Facu
+- Tiki
+- Gustavo
+Cuando un cliente te pida hablar con uno específico ("quiero que me atienda Tiki", "pasame con Antonio"), usá escalar_a_vendedor con el campo vendedor_preferido. Si el vendedor pedido no está disponible, el sistema asigna a otro automáticamente y vos le avisás al cliente: "ahora está ocupado pero te pasamos con [otro nombre] que también te puede ayudar".
 
 REGLAS IMPORTANTES:
 - NO inventes autos, precios, kilómetros, ni datos de inventario. Vos NO tenés inventario.
