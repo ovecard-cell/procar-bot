@@ -3,7 +3,8 @@ const { db, getSetting } = require('./database');
 
 // Cadencia de recuperación — todo dentro de la ventana de 24hs de Meta
 // Cada mensaje suma algo nuevo, no repite "te recuerdo"
-const CADENCIA = [
+// Tenemos dos modos: general (no escalado) y postEscalado (ya hubo vendedor asignado)
+const CADENCIA_GENERAL = [
   {
     tipo: '2h',
     horas: 2,
@@ -18,6 +19,19 @@ const CADENCIA = [
     tipo: '18h',
     horas: 18,
     texto: 'Quedo atento por si querés retomar. Acá o por el WhatsApp que te pasé, lo que te quede más cómodo.',
+  },
+];
+
+const CADENCIA_POST_ESCALADO = [
+  {
+    tipo: 'esc_6h',
+    horas: 6,
+    plantilla: (vendedor) => `Che, ¿pudo escribirte ${vendedor || 'el vendedor'}? Si todavía no, decime y reviso.`,
+  },
+  {
+    tipo: 'esc_18h',
+    horas: 18,
+    plantilla: (vendedor) => `¿Qué te pareció la propuesta de ${vendedor || 'el vendedor'}? Cualquier ajuste que necesites decime, vemos cómo armarlo.`,
   },
 ];
 

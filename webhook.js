@@ -98,10 +98,10 @@ function verificarWebhook(req, res) {
 async function recibirMensaje(req, res) {
   res.sendStatus(200);
 
-  // Si el agente está pausado, registramos el mensaje pero no respondemos
+  // Si el agente está pausado globalmente, no respondemos
   const agenteActivo = getSetting('agente_activo', 'true') === 'true';
   if (!agenteActivo) {
-    console.log('[Webhook] Agente pausado — mensaje recibido pero NO se responde');
+    console.log('[Webhook] Agente pausado globalmente — mensaje recibido pero NO se responde');
     return;
   }
 
@@ -125,7 +125,7 @@ async function recibirMensaje(req, res) {
 
       limpiarRecordatorios(telefono);
       const respuesta = await procesarMensaje(telefono, texto, 'whatsapp');
-      await enviarWhatsApp(phoneId, telefono, respuesta);
+      if (respuesta) await enviarWhatsApp(phoneId, telefono, respuesta);
       return;
     }
 
@@ -143,7 +143,7 @@ async function recibirMensaje(req, res) {
 
       limpiarRecordatorios(senderId);
       const respuesta = await procesarMensaje(senderId, texto, 'instagram');
-      await enviarInstagram(senderId, respuesta);
+      if (respuesta) await enviarInstagram(senderId, respuesta);
       return;
     }
 
@@ -161,7 +161,7 @@ async function recibirMensaje(req, res) {
 
       limpiarRecordatorios(senderId);
       const respuesta = await procesarMensaje(senderId, texto, 'messenger');
-      await enviarMessenger(senderId, respuesta);
+      if (respuesta) await enviarMessenger(senderId, respuesta);
       return;
     }
 
@@ -242,4 +242,4 @@ async function enviarMessenger(recipientId, texto) {
   }
 }
 
-module.exports = { verificarWebhook, recibirMensaje, validarToken };
+module.exports = { verificarWebhook, recibirMensaje, validarToken, enviarMessenger, enviarInstagram, enviarWhatsApp };

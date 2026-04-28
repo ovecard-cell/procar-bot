@@ -6,6 +6,7 @@ const {
   obtenerHistorial,
   obtenerVendedorConMenosAsignaciones,
   crearAsignacion,
+  getSetting,
 } = require('./database');
 const { enviarWhatsAppVendedor } = require('./mensajero');
 
@@ -92,6 +93,11 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
       vendedor_id: vendedor.id,
       motivo: input.motivo,
     });
+
+    // Pausar el bot para esta conversación: el vendedor toma el chat
+    const { setSetting } = require('./database');
+    setSetting(`bot_pausado_${telefono}`, 'true');
+    console.log(`[Agente] Bot pausado para ${telefono} - vendedor ${vendedor.nombre} toma el chat`);
 
     // Enviar WhatsApp al vendedor
     const mensajeVendedor = `🚗 *Nuevo cliente asignado*\n\n` +
@@ -226,6 +232,13 @@ La idea es que el cliente lo tenga lo antes posible, así si se cae la conversac
 
 async function procesarMensaje(telefono, mensajeUsuario, canal) {
   guardarMensaje({ telefono, rol: 'user', contenido: mensajeUsuario, canal });
+
+  // Si el bot está pausado para esta conversación (porque un vendedor la tomó),
+  // guardamos el mensaje pero no respondemos.
+  if (getSetting(`bot_pausado_${telefono}`, 'false') === 'true') {
+    console.log(`[Agente] Bot pausado para ${telefono} — vendedor a cargo, no respondo`);
+    return null;
+  }
 
   const historial = obtenerHistorial(telefono);
   const mensajes = historial.map(m => ({

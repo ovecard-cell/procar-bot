@@ -53,6 +53,18 @@
   .selecciona { display: flex; align-items: center; justify-content: center; height: 100%; color: #666; flex: 1; }
   .evento-escalado { align-self: center; background: #C9A84C; color: #1a1a2e; padding: 8px 14px; border-radius: 16px; font-size: 0.82rem; font-weight: 700; margin: 8px 0; }
 
+  .compose { padding: 12px; background: #232342; border-top: 1px solid #333; display: flex; gap: 8px; align-items: center; }
+  .compose input { flex: 1; padding: 10px 14px; border: 1px solid #444; background: #1a1a2e; color: #e8e8f0; border-radius: 6px; font-size: 0.92rem; outline: none; }
+  .compose input:focus { border-color: #C9A84C; }
+  .compose button { background: #C9A84C; color: #1a1a2e; border: none; padding: 10px 18px; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 0.85rem; }
+  .compose button:hover { background: #d8b860; }
+  .compose button:disabled { background: #555; color: #888; cursor: not-allowed; }
+  .estado-bot { padding: 8px 12px; background: #232342; border-bottom: 1px solid #333; font-size: 0.82rem; color: #aaa; display: flex; justify-content: space-between; align-items: center; }
+  .pausado-pill { background: #e63946; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.72rem; font-weight: 700; }
+  .activo-pill { background: #2a9d8f; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.72rem; font-weight: 700; }
+  .reactivar { background: transparent; border: 1px solid #C9A84C; color: #C9A84C; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; }
+  .reactivar:hover { background: #C9A84C; color: #1a1a2e; }
+
   .actualizar { margin-left: auto; background: transparent; border: 1px solid #555; color: #aaa; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; }
   .actualizar:hover { border-color: #C9A84C; color: #C9A84C; }
 
@@ -108,7 +120,15 @@
   </div>
   <div class="panel">
     <h2 id="tituloChat">Mensajes</h2>
+    <div class="estado-bot" id="estadoBotConv" style="display:none">
+      <span><span id="pillBot"></span> <span id="textoEstadoBot"></span></span>
+      <button class="reactivar" id="btnReactivarBot">Reactivar bot</button>
+    </div>
     <div class="mensajes" id="mensajes"><div class="selecciona">Elegí una conversación de la izquierda</div></div>
+    <div class="compose" id="compose" style="display:none">
+      <input type="text" id="inputMsg" placeholder="Escribir como vendedor..." />
+      <button id="btnEnviar">Enviar</button>
+    </div>
   </div>
 </div>
 
@@ -248,6 +268,23 @@
     if (data.presupuesto) partes.push(`💰 USD ${data.presupuesto}`);
     document.getElementById('tituloChat').innerHTML = partes.join(' &nbsp;·&nbsp; ');
 
+    // Mostrar estado del bot y compose
+    const estadoBox = document.getElementById('estadoBotConv');
+    const pill = document.getElementById('pillBot');
+    const texto = document.getElementById('textoEstadoBot');
+    const btnReactivar = document.getElementById('btnReactivarBot');
+    estadoBox.style.display = 'flex';
+    if (data.bot_pausado) {
+      pill.outerHTML = '<span class="pausado-pill" id="pillBot">🔴 BOT PAUSADO</span>';
+      texto.textContent = 'El vendedor está manejando este chat';
+      btnReactivar.style.display = 'inline-block';
+    } else {
+      pill.outerHTML = '<span class="activo-pill" id="pillBot">🟢 BOT ACTIVO</span>';
+      texto.textContent = 'Gonzalo está respondiendo automáticamente';
+      btnReactivar.style.display = 'none';
+    }
+    document.getElementById('compose').style.display = 'flex';
+
     if (!data.mensajes || data.mensajes.length === 0) {
       cont.innerHTML = '<div class="selecciona">No hay mensajes</div>';
       return;
@@ -299,6 +336,45 @@
   }
 
   document.getElementById('btnToggle').addEventListener('click', toggleAgente);
+
+  // Enviar mensaje como vendedor
+  async function enviarMensaje() {
+    if (!convActiva) return;
+    const input = document.getElementById('inputMsg');
+    const btn = document.getElementById('btnEnviar');
+    const texto = input.value.trim();
+    if (!texto) return;
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/conversacion/' + encodeURIComponent(convActiva) + '/enviar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texto, vendedor: VENDEDOR || 'Procar' }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Error desconocido');
+      input.value = '';
+      cargarMensajes(convActiva);
+    } catch (err) {
+      alert('Error mandando: ' + err.message);
+    }
+    btn.disabled = false;
+    input.focus();
+  }
+
+  document.getElementById('btnEnviar').addEventListener('click', enviarMensaje);
+  document.getElementById('inputMsg').addEventListener('keydown', e => {
+    if (e.key === 'Enter') enviarMensaje();
+  });
+
+  // Reactivar bot para una conversación
+  document.getElementById('btnReactivarBot').addEventListener('click', async () => {
+    if (!convActiva) return;
+    if (!confirm('¿Volver a activar a Gonzalo en este chat? Va a empezar a responder automáticamente otra vez.')) return;
+    await fetch('/api/conversacion/' + encodeURIComponent(convActiva) + '/reactivar-bot', { method: 'POST' });
+    cargarMensajes(convActiva);
+  });
+
   cargarTodo();
   // Auto-refresh cada 10s
   setInterval(cargarTodo, 10000);

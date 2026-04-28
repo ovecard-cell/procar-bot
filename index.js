@@ -12,7 +12,7 @@ console.log('[DEBUG] INSTAGRAM_ACCESS_TOKEN:', process.env.INSTAGRAM_ACCESS_TOKE
 const express = require('express');
 const path = require('path');
 const { inicializarDB, cargarAutosEjemplo, cargarVendedoresEjemplo, getSetting, setSetting } = require('./database');
-const { verificarWebhook, recibirMensaje, validarToken } = require('./webhook');
+const { verificarWebhook, recibirMensaje, validarToken, enviarMessenger, enviarInstagram, enviarWhatsApp } = require('./webhook');
 const { procesarMensaje } = require('./agente');
 const { analizar, generarHTML } = require('./analizar');
 const { distribuirLeads, generarHTMLReporte } = require('./distribuir');
@@ -192,6 +192,63 @@ app.get('/api/conversaciones', (req, res) => {
   res.json(rows);
 });
 
+// Vendedor escribe al cliente desde el dashboard
+app.post('/api/conversacion/:telefono/enviar', async (req, res) => {
+  try {
+    const { db, guardarMensaje } = require('./database');
+    const telefono = req.params.telefono;
+    const { texto, vendedor } = req.body;
+
+    if (!texto || !texto.trim()) {
+      return res.status(400).json({ error: 'Falta texto' });
+    }
+
+    // Detectar el canal a partir de la última conversación
+    const ultimo = db.prepare(`
+      SELECT canal FROM conversaciones WHERE telefono = ? ORDER BY creado_en DESC LIMIT 1
+    `).get(telefono);
+
+    if (!ultimo) {
+      return res.status(404).json({ error: 'No hay conversación previa con ese cliente' });
+    }
+
+    const canal = ultimo.canal;
+    const mensaje = vendedor ? `${texto}` : texto;
+
+    // Pausar el bot para esta conversación si no estaba pausado
+    setSetting(`bot_pausado_${telefono}`, 'true');
+
+    // Enviar al cliente por el canal correspondiente
+    if (canal === 'messenger' || canal === 'facebook') {
+      await enviarMessenger(telefono, mensaje);
+    } else if (canal === 'instagram') {
+      await enviarInstagram(telefono, mensaje);
+    } else if (canal === 'whatsapp') {
+      const config = require('./config');
+      await enviarWhatsApp(config.WHATSAPP_PHONE_ID, telefono, mensaje);
+    } else {
+      return res.status(400).json({ error: `Canal ${canal} no soportado` });
+    }
+
+    // Guardar el mensaje en la DB con marca de quién lo escribió
+    const contenido = vendedor ? `[${vendedor}] ${texto}` : texto;
+    guardarMensaje({ telefono, rol: 'assistant', contenido, canal });
+
+    res.json({ ok: true, canal });
+  } catch (err) {
+    console.error('[Enviar manual] Error:', err.message);
+    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+  }
+});
+
+// Reactivar el bot para una conversación (vendedor termina y suelta)
+app.post('/api/conversacion/:telefono/reactivar-bot', (req, res) => {
+  const { db } = require('./database');
+  db.prepare('DELETE FROM settings WHERE key = ?').run(`bot_pausado_${req.params.telefono}`);
+  console.log(`[Bot] Reactivado para ${req.params.telefono}`);
+  res.json({ ok: true });
+});
+
 app.get('/api/conversacion/:telefono', (req, res) => {
   const { db } = require('./database');
   const cliente = db.prepare('SELECT nombre, cuil, presupuesto, interes FROM clientes WHERE telefono = ?').get(req.params.telefono);
@@ -208,7 +265,8 @@ app.get('/api/conversacion/:telefono', (req, res) => {
     WHERE a.cliente_telefono = ?
     ORDER BY a.creado_en ASC
   `).all(req.params.telefono);
-  res.json({ nombre: cliente?.nombre, cuil: cliente?.cuil, presupuesto: cliente?.presupuesto, interes: cliente?.interes, mensajes, asignaciones });
+  const botPausado = getSetting(`bot_pausado_${req.params.telefono}`, 'false') === 'true';
+  res.json({ nombre: cliente?.nombre, cuil: cliente?.cuil, presupuesto: cliente?.presupuesto, interes: cliente?.interes, mensajes, asignaciones, bot_pausado: botPausado });
 });
 
 app.post('/chat', async (req, res) => {
