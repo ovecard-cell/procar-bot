@@ -62,14 +62,14 @@ function inicializarDB() {
       nombre TEXT NOT NULL,
       telefono TEXT UNIQUE NOT NULL,
       activo INTEGER DEFAULT 1,
-      canales TEXT DEFAULT 'todos'
+      canales TEXT DEFAULT 'todos',
+      password TEXT
     )
   `);
 
-  // Migración: agregar canales si la tabla ya existía
-  try {
-    db.exec("ALTER TABLE vendedores ADD COLUMN canales TEXT DEFAULT 'todos'");
-  } catch (e) { /* ya existe */ }
+  // Migración: agregar columnas si la tabla ya existía
+  try { db.exec("ALTER TABLE vendedores ADD COLUMN canales TEXT DEFAULT 'todos'"); } catch (e) { /* ya existe */ }
+  try { db.exec("ALTER TABLE vendedores ADD COLUMN password TEXT"); } catch (e) { /* ya existe */ }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS asignaciones (
@@ -301,19 +301,37 @@ function cargarAutosEjemplo() {
 
 function cargarVendedoresEjemplo() {
   const { total } = db.prepare('SELECT COUNT(*) as total FROM vendedores').get();
-  if (total > 0) return;
+  if (total === 0) {
+    const insert = db.prepare('INSERT INTO vendedores (nombre, telefono, password) VALUES (?, ?, ?)');
+    const vendedores = [
+      ['Antonio', '5493794874815', 'antonio1234'],
+      ['Tiki',    '5493794659140', 'tiki1234'],
+      ['Facu',    '5493794146435', 'facu1234'],
+      ['Gustavo', '5493794617070', 'gustavo1234'],
+    ];
+    for (const v of vendedores) insert.run(...v);
+    console.log('Vendedores cargados con contraseñas iniciales.');
+  }
 
-  // TODO: Reemplazar con los teléfonos reales de Antonio, Facu y Tiki
-  const insert = db.prepare('INSERT INTO vendedores (nombre, telefono) VALUES (?, ?)');
-  const vendedores = [
-    ['Antonio', '5493794874815'],
-    ['Tiki', '5493794659140'],
-    ['Facu', '5493794146435'],
-    ['Gustavo', '5493794617070'],
-  ];
+  // Si algún vendedor existente no tiene password, le pongo una default
+  const sinPass = db.prepare("SELECT id, nombre FROM vendedores WHERE password IS NULL OR password = ''").all();
+  for (const v of sinPass) {
+    const passDefault = v.nombre.toLowerCase() + '1234';
+    db.prepare('UPDATE vendedores SET password = ? WHERE id = ?').run(passDefault, v.id);
+    console.log(`[Auth] Password inicial seteada para ${v.nombre}: ${passDefault}`);
+  }
+}
 
-  for (const v of vendedores) insert.run(...v);
-  console.log('Vendedores de ejemplo cargados: Antonio, Facu, Tiki.');
+function autenticarVendedor(nombre, password) {
+  const v = db.prepare('SELECT * FROM vendedores WHERE LOWER(nombre) = LOWER(?)').get(nombre);
+  if (!v) return null;
+  if (v.password !== password) return null;
+  return v;
+}
+
+function cambiarPassword(nombre, nuevaPass) {
+  const r = db.prepare('UPDATE vendedores SET password = ? WHERE LOWER(nombre) = LOWER(?)').run(nuevaPass, nombre);
+  return r.changes > 0;
 }
 
 module.exports = {
@@ -333,4 +351,6 @@ module.exports = {
   marcarSeguimientoEnviado,
   getSetting,
   setSetting,
+  autenticarVendedor,
+  cambiarPassword,
 };

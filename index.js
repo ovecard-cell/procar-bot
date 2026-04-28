@@ -11,7 +11,45 @@ console.log('[DEBUG] INSTAGRAM_ACCESS_TOKEN:', process.env.INSTAGRAM_ACCESS_TOKE
 
 const express = require('express');
 const path = require('path');
-const { inicializarDB, cargarAutosEjemplo, cargarVendedoresEjemplo, getSetting, setSetting } = require('./database');
+const crypto = require('crypto');
+const { inicializarDB, cargarAutosEjemplo, cargarVendedoresEjemplo, getSetting, setSetting, autenticarVendedor, cambiarPassword } = require('./database');
+
+const COOKIE_SECRET = process.env.COOKIE_SECRET || 'procar-secret-' + (process.env.ANTHROPIC_API_KEY || 'default').slice(0, 16);
+
+function firmarCookie(valor) {
+  return crypto.createHmac('sha256', COOKIE_SECRET).update(valor).digest('hex').slice(0, 32);
+}
+
+function parseCookies(req) {
+  const cookies = {};
+  const header = req.headers.cookie || '';
+  header.split(';').forEach(c => {
+    const [name, ...rest] = c.trim().split('=');
+    if (name) cookies[name] = decodeURIComponent(rest.join('='));
+  });
+  return cookies;
+}
+
+function getVendedorAutenticado(req) {
+  const cookies = parseCookies(req);
+  const v = cookies.procar_vendedor;
+  if (!v) return null;
+  const partes = v.split('|');
+  if (partes.length !== 3) return null;
+  const [nombre, ts, firma] = partes;
+  const esperada = firmarCookie(`${nombre}|${ts}`);
+  if (firma !== esperada) return null;
+  // Cookie válida 30 días
+  if (Date.now() - parseInt(ts) > 30 * 24 * 60 * 60 * 1000) return null;
+  return nombre;
+}
+
+function setCookieVendedor(res, nombre) {
+  const ts = Date.now();
+  const firma = firmarCookie(`${nombre}|${ts}`);
+  const valor = `${nombre}|${ts}|${firma}`;
+  res.setHeader('Set-Cookie', `procar_vendedor=${encodeURIComponent(valor)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 60 * 60}`);
+}
 const { verificarWebhook, recibirMensaje, validarToken, enviarMessenger, enviarInstagram, enviarWhatsApp } = require('./webhook');
 const { procesarMensaje } = require('./agente');
 const { analizar, generarHTML } = require('./analizar');
@@ -89,9 +127,85 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
-// Dashboard por vendedor (solo ve sus asignados)
+// Dashboard por vendedor con login
 app.get('/vendedor/:nombre', (req, res) => {
-  res.sendFile(path.join(__dirname, 'admin.html'));
+  const autenticado = getVendedorAutenticado(req);
+  const pedido = req.params.nombre;
+
+  // Si está autenticado y coincide con el pedido (case insensitive), serve dashboard
+  if (autenticado && autenticado.toLowerCase() === pedido.toLowerCase()) {
+    return res.sendFile(path.join(__dirname, 'admin.html'));
+  }
+
+  // Sino mostrar login
+  res.send(`
+<!DOCTYPE html><html lang="es"><head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Login — Procar</title>
+<style>
+  body { font-family: -apple-system, sans-serif; background: #0f0f1a; color: #fff; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+  .card { background: #1a1a2e; padding: 40px; border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); border-top: 4px solid #C9A84C; min-width: 320px; }
+  h1 { color: #C9A84C; margin: 0 0 8px 0; font-size: 1.4rem; letter-spacing: 0.05em; }
+  p { color: #888; margin: 0 0 24px 0; font-size: 0.9rem; }
+  label { display: block; color: #C9A84C; font-size: 0.8rem; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+  input { width: 100%; padding: 12px; border-radius: 6px; border: 1px solid #444; background: #0f0f1a; color: #fff; font-size: 1rem; box-sizing: border-box; margin-bottom: 16px; }
+  input:focus { border-color: #C9A84C; outline: none; }
+  button { width: 100%; padding: 14px; background: #C9A84C; color: #1a1a2e; border: none; border-radius: 8px; font-weight: 800; font-size: 1rem; cursor: pointer; text-transform: uppercase; letter-spacing: 0.05em; }
+  button:hover { background: #d8b860; }
+  .err { color: #e63946; font-size: 0.85rem; margin-top: 8px; min-height: 18px; }
+</style></head><body>
+<div class="card">
+  <h1>PROCAR</h1>
+  <p>Acceso para vendedor: <strong>${pedido}</strong></p>
+  <form id="loginForm">
+    <label>Contraseña</label>
+    <input type="password" id="pass" required autofocus />
+    <button type="submit">Entrar</button>
+    <div class="err" id="err"></div>
+  </form>
+</div>
+<script>
+  document.getElementById('loginForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const pass = document.getElementById('pass').value;
+    const err = document.getElementById('err');
+    err.textContent = '';
+    const r = await fetch('/api/vendedor/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombre: ${JSON.stringify(pedido)}, password: pass }),
+    });
+    const data = await r.json();
+    if (data.ok) location.reload();
+    else err.textContent = data.error || 'Contraseña incorrecta';
+  });
+</script>
+</body></html>`);
+});
+
+app.post('/api/vendedor/login', (req, res) => {
+  const { nombre, password } = req.body;
+  if (!nombre || !password) return res.status(400).json({ error: 'Faltan datos' });
+  const v = autenticarVendedor(nombre, password);
+  if (!v) return res.status(401).json({ error: 'Contraseña incorrecta' });
+  if (!v.activo) return res.status(403).json({ error: 'Tu cuenta está pausada. Hablá con el jefe.' });
+  setCookieVendedor(res, v.nombre);
+  console.log(`[Login] ${v.nombre} se logueó`);
+  res.json({ ok: true });
+});
+
+app.post('/api/vendedor/logout', (req, res) => {
+  res.setHeader('Set-Cookie', `procar_vendedor=; HttpOnly; Path=/; Max-Age=0`);
+  res.json({ ok: true });
+});
+
+app.post('/api/vendedor/cambiar-password', (req, res) => {
+  const autenticado = getVendedorAutenticado(req);
+  if (!autenticado) return res.status(401).json({ error: 'No autenticado' });
+  const { nueva } = req.body;
+  if (!nueva || nueva.length < 4) return res.status(400).json({ error: 'Mínimo 4 caracteres' });
+  cambiarPassword(autenticado, nueva);
+  res.json({ ok: true });
 });
 
 // API JSON para el dashboard
