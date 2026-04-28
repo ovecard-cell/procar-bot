@@ -350,6 +350,81 @@ app.get('/distribuir', async (req, res) => {
   }
 });
 
+// Test rápido: mandar WhatsApp desde el bot a cualquier número
+app.get('/test-wa', (req, res) => {
+  res.send(`
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8" /><title>Test WhatsApp Procar</title>
+<style>
+  body { font-family: sans-serif; background: #0f0f1a; color: #fff; padding: 32px; max-width: 600px; margin: 0 auto; }
+  h1 { color: #C9A84C; }
+  input, textarea { width: 100%; padding: 12px; border-radius: 6px; border: 1px solid #444; background: #1a1a2e; color: #fff; font-size: 14px; margin-bottom: 12px; box-sizing: border-box; }
+  button { background: #25d366; color: white; padding: 14px 24px; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; }
+  button:disabled { background: #444; }
+  label { display: block; margin-bottom: 6px; color: #C9A84C; font-weight: 600; }
+  .res { margin-top: 20px; padding: 16px; border-radius: 8px; }
+  .ok { background: #2a9d8f33; border: 1px solid #2a9d8f; }
+  .err { background: #e6394633; border: 1px solid #e63946; }
+  .nota { background: #C9A84C22; border-left: 4px solid #C9A84C; padding: 14px; border-radius: 4px; margin-bottom: 24px; font-size: 0.9rem; }
+</style></head>
+<body>
+  <h1>📱 Test WhatsApp Procar</h1>
+  <div class="nota">
+    <strong>⚠️ Antes de probar:</strong> el destinatario tiene que haberle mandado al menos un mensaje al WhatsApp de Procar en las últimas 24hs.
+    Si no lo hizo, el envío va a fallar con error de Meta.
+  </div>
+  <label>Número (con código país, sin +. Ej: 5493794617070)</label>
+  <input type="text" id="numero" placeholder="5493794617070" value="5493794617070" />
+  <label>Mensaje</label>
+  <textarea id="texto" rows="4">Che, soy Gonzalo de Procar. Te mando este mensaje de prueba para ver cómo se ve. Si te llega, decime "ok".</textarea>
+  <button id="btn">Mandar WhatsApp</button>
+  <div id="resultado"></div>
+<script>
+  document.getElementById('btn').addEventListener('click', async () => {
+    const numero = document.getElementById('numero').value.trim();
+    const texto = document.getElementById('texto').value.trim();
+    const btn = document.getElementById('btn');
+    const res = document.getElementById('resultado');
+    if (!numero || !texto) { alert('Faltan datos'); return; }
+    btn.disabled = true; btn.textContent = 'Mandando...';
+    res.innerHTML = '';
+    try {
+      const r = await fetch('/api/test-whatsapp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ numero, texto })
+      });
+      const data = await r.json();
+      if (data.ok) {
+        res.innerHTML = '<div class="res ok">✅ Mensaje enviado. Fijate el WhatsApp del destinatario.</div>';
+      } else {
+        res.innerHTML = '<div class="res err">❌ Error: ' + (data.error || 'desconocido') + '</div>';
+      }
+    } catch (err) {
+      res.innerHTML = '<div class="res err">❌ Error de red: ' + err.message + '</div>';
+    }
+    btn.disabled = false; btn.textContent = 'Mandar WhatsApp';
+  });
+</script>
+</body></html>`);
+});
+
+app.post('/api/test-whatsapp', async (req, res) => {
+  try {
+    const { numero, texto } = req.body;
+    if (!numero || !texto) return res.status(400).json({ error: 'Faltan datos' });
+    const { enviarWhatsAppVendedor } = require('./mensajero');
+    await enviarWhatsAppVendedor(numero, texto);
+    console.log(`[Test WA] Mensaje enviado a ${numero}`);
+    res.json({ ok: true });
+  } catch (err) {
+    const msg = err.response?.data?.error?.message || err.message;
+    console.error('[Test WA] Error:', msg);
+    res.status(500).json({ error: msg });
+  }
+});
+
 // Activar/pausar un vendedor (no recibe leads nuevos si está pausado)
 app.post('/api/vendedor/:nombre/toggle', (req, res) => {
   const { db } = require('./database');
