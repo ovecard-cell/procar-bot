@@ -66,6 +66,50 @@ app.get('/analizar', async (req, res) => {
   }
 });
 
+// Importar conversaciones desde el Inbox de Meta (manualmente via Claude Desktop)
+app.post('/importar-conversacion', (req, res) => {
+  try {
+    const { db, guardarMensaje } = require('./database');
+    const { telefono, canal, nombre, mensajes } = req.body;
+
+    if (!telefono || !canal || !Array.isArray(mensajes) || mensajes.length === 0) {
+      return res.status(400).json({ error: 'Faltan datos: telefono, canal, mensajes (array)' });
+    }
+
+    // Borrar conversación previa con ese telefono+canal para evitar duplicados
+    db.prepare('DELETE FROM conversaciones WHERE telefono = ? AND canal = ?').run(telefono, canal);
+
+    let insertados = 0;
+    const stmt = db.prepare(`
+      INSERT INTO conversaciones (telefono, rol, contenido, canal, creado_en)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+
+    for (const m of mensajes) {
+      if (!m.rol || !m.contenido) continue;
+      const rol = m.rol === 'user' || m.rol === 'cliente' ? 'user' : 'assistant';
+      const fecha = m.fecha || new Date().toISOString();
+      stmt.run(telefono, rol, m.contenido, canal, fecha);
+      insertados++;
+    }
+
+    // Guardar/actualizar el lead
+    if (nombre) {
+      db.prepare(`
+        INSERT INTO clientes (telefono, nombre, canal)
+        VALUES (?, ?, ?)
+        ON CONFLICT(telefono) DO UPDATE SET nombre = COALESCE(?, nombre), canal = ?, actualizado_en = CURRENT_TIMESTAMP
+      `).run(telefono, nombre, canal, nombre, canal);
+    }
+
+    console.log(`[Importar] ${insertados} mensajes de ${telefono} (${canal})`);
+    res.json({ ok: true, insertados, telefono, canal });
+  } catch (err) {
+    console.error('[Importar] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Distribuir leads calientes a vendedores por WhatsApp
 app.get('/distribuir', async (req, res) => {
   try {
