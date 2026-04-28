@@ -199,19 +199,20 @@ async function enviarWhatsApp(phoneId, destinatario, texto) {
 }
 
 async function enviarInstagram(recipientId, texto) {
+  // Fallback: si no hay INSTAGRAM_ACCESS_TOKEN, usar META_ACCESS_TOKEN (suele
+  // funcionar cuando la cuenta de IG está vinculada a la página de Facebook).
+  const token = config.INSTAGRAM_ACCESS_TOKEN || config.META_ACCESS_TOKEN;
+  // Si tenemos token específico de IG, usamos graph.instagram.com.
+  // Sino, usamos graph.facebook.com con el endpoint de la página.
+  const url = config.INSTAGRAM_ACCESS_TOKEN
+    ? `https://graph.instagram.com/v21.0/me/messages`
+    : `https://graph.facebook.com/v19.0/me/messages`;
+
   try {
     await axios.post(
-      `https://graph.instagram.com/v21.0/me/messages`,
-      {
-        recipient: { id: recipientId },
-        message: { text: texto }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${config.INSTAGRAM_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json'
-        }
-      }
+      url,
+      { recipient: { id: recipientId }, message: { text: texto } },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
     console.log(`[Instagram] Respuesta enviada a ${recipientId}`);
   } catch (err) {
