@@ -12,7 +12,7 @@ console.log('[DEBUG] INSTAGRAM_ACCESS_TOKEN:', process.env.INSTAGRAM_ACCESS_TOKE
 const express = require('express');
 const path = require('path');
 const { inicializarDB, cargarAutosEjemplo, cargarVendedoresEjemplo } = require('./database');
-const { verificarWebhook, recibirMensaje } = require('./webhook');
+const { verificarWebhook, recibirMensaje, validarToken } = require('./webhook');
 const { procesarMensaje } = require('./agente');
 const { analizar, generarHTML } = require('./analizar');
 
@@ -71,4 +71,6 @@ app.post('/webhook', recibirMensaje);
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Servidor Procar Bot v1.1 corriendo en puerto ${PORT}`);
+  // Validar token de Meta al arrancar (no bloquea el servidor)
+  validarToken().catch(() => {});
 });

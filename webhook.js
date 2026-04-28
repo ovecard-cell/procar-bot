@@ -3,6 +3,59 @@ const { procesarMensaje } = require('./agente');
 const config = require('./config');
 
 // ─────────────────────────────────────────────
+// HELPERS DE ERRORES DE META
+// ─────────────────────────────────────────────
+
+function describirErrorMeta(err, contexto) {
+  const status = err.response?.status;
+  const data = err.response?.data;
+  const errorMeta = data?.error || {};
+
+  if (status === 401 || errorMeta.code === 190 || errorMeta.type === 'OAuthException') {
+    console.error(`[ERROR] Token de Meta inválido o expirado (HTTP ${status}) — renovar META_ACCESS_TOKEN [${contexto}]`);
+    console.error(`        Detalle: ${errorMeta.message || 'sin detalle'}`);
+    return;
+  }
+
+  if (status === 403) {
+    console.error(`[ERROR] Permiso denegado por Meta (HTTP 403) — el token no tiene los scopes necesarios [${contexto}]`);
+    console.error(`        Detalle: ${errorMeta.message || 'sin detalle'}`);
+    return;
+  }
+
+  if (status === 400) {
+    console.error(`[ERROR] Petición inválida a Meta (HTTP 400) [${contexto}]`);
+    console.error(`        Detalle: ${errorMeta.message || JSON.stringify(data)}`);
+    return;
+  }
+
+  console.error(`[ERROR] Falla al llamar a Meta [${contexto}]: ${err.message}`);
+  if (data) console.error(`        Respuesta: ${JSON.stringify(data)}`);
+}
+
+// ─────────────────────────────────────────────
+// VALIDACIÓN DEL TOKEN AL ARRANCAR
+// ─────────────────────────────────────────────
+
+async function validarToken() {
+  if (!config.META_ACCESS_TOKEN) {
+    console.error('[STARTUP] META_ACCESS_TOKEN está vacío. El bot no podrá responder mensajes.');
+    return false;
+  }
+
+  try {
+    const res = await axios.get(`https://graph.facebook.com/v19.0/me`, {
+      params: { access_token: config.META_ACCESS_TOKEN },
+    });
+    console.log(`[STARTUP] Token de Meta válido. Identidad: ${res.data.name || res.data.id}`);
+    return true;
+  } catch (err) {
+    describirErrorMeta(err, 'validarToken');
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────
 // VERIFICACIÓN DEL WEBHOOK (Meta lo llama al configurar)
 // ─────────────────────────────────────────────
 
@@ -97,56 +150,71 @@ async function recibirMensaje(req, res) {
 // ─────────────────────────────────────────────
 
 async function enviarWhatsApp(phoneId, destinatario, texto) {
-  await axios.post(
-    `https://graph.facebook.com/v19.0/${phoneId}/messages`,
-    {
-      messaging_product: 'whatsapp',
-      to: destinatario,
-      type: 'text',
-      text: { body: texto }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${config.META_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json'
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v19.0/${phoneId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: destinatario,
+        type: 'text',
+        text: { body: texto }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${config.META_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
       }
-    }
-  );
-  console.log(`[WhatsApp] Respuesta enviada a ${destinatario}`);
+    );
+    console.log(`[WhatsApp] Respuesta enviada a ${destinatario}`);
+  } catch (err) {
+    describirErrorMeta(err, `enviarWhatsApp a ${destinatario}`);
+    throw err;
+  }
 }
 
 async function enviarInstagram(recipientId, texto) {
-  await axios.post(
-    `https://graph.instagram.com/v21.0/me/messages`,
-    {
-      recipient: { id: recipientId },
-      message: { text: texto }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${config.INSTAGRAM_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json'
+  try {
+    await axios.post(
+      `https://graph.instagram.com/v21.0/me/messages`,
+      {
+        recipient: { id: recipientId },
+        message: { text: texto }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${config.INSTAGRAM_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
       }
-    }
-  );
-  console.log(`[Instagram] Respuesta enviada a ${recipientId}`);
+    );
+    console.log(`[Instagram] Respuesta enviada a ${recipientId}`);
+  } catch (err) {
+    describirErrorMeta(err, `enviarInstagram a ${recipientId}`);
+    throw err;
+  }
 }
 
 async function enviarMessenger(recipientId, texto) {
-  await axios.post(
-    `https://graph.facebook.com/v19.0/me/messages`,
-    {
-      recipient: { id: recipientId },
-      message: { text: texto }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${config.META_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json'
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v19.0/me/messages`,
+      {
+        recipient: { id: recipientId },
+        message: { text: texto }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${config.META_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
       }
-    }
-  );
-  console.log(`[Messenger] Respuesta enviada a ${recipientId}`);
+    );
+    console.log(`[Messenger] Respuesta enviada a ${recipientId}`);
+  } catch (err) {
+    describirErrorMeta(err, `enviarMessenger a ${recipientId}`);
+    throw err;
+  }
 }
 
-module.exports = { verificarWebhook, recibirMensaje };
+module.exports = { verificarWebhook, recibirMensaje, validarToken };
