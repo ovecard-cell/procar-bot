@@ -32,6 +32,40 @@ app.get('/', (req, res) => {
   res.send('Bot Procar funcionando correctamente');
 });
 
+// Mapa del proyecto (lectura del ROADMAP.md)
+app.get('/mapa', (req, res) => {
+  const fs = require('fs');
+  try {
+    const md = fs.readFileSync(path.join(__dirname, 'ROADMAP.md'), 'utf8');
+    const html = md
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+      .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+      .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+      .replace(/^- \[x\] (.+)$/gm, '<li class="done">✅ $1</li>')
+      .replace(/^- \[ \] (.+)$/gm, '<li class="todo">⬜ $1</li>')
+      .replace(/^- (.+)$/gm, '<li>• $1</li>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\n\n/g, '<br><br>');
+    res.send(`<!doctype html><html><head><meta charset="utf-8"><title>Mapa Procar Bot</title>
+      <style>
+        body { font-family: -apple-system, sans-serif; max-width: 900px; margin: 0 auto; padding: 32px; background: #0f0f1a; color: #e8e8f0; line-height: 1.6; }
+        h1 { color: #C9A84C; border-bottom: 2px solid #C9A84C; padding-bottom: 12px; }
+        h2 { color: #C9A84C; margin-top: 32px; }
+        h3 { color: #fff; margin-top: 20px; }
+        li { list-style: none; padding: 4px 0; }
+        li.done { color: #2a9d8f; }
+        li.todo { color: #f4a261; }
+        code { background: #1a1a2e; padding: 2px 6px; border-radius: 4px; color: #C9A84C; }
+        a { color: #C9A84C; }
+        strong { color: #fff; }
+      </style></head><body>${html}</body></html>`);
+  } catch (err) {
+    res.status(500).send('Error leyendo el mapa: ' + err.message);
+  }
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
