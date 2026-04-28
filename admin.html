@@ -179,9 +179,12 @@
     const v = data.por_vendedor || [];
     cont.innerHTML = v.length > 0
       ? v.map(x => `
-          <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #2a2a40;">
-            <span><strong>${escapar(x.nombre)}</strong></span>
-            <span style="color:#aaa">${x.total} total · <span style="color:#f4a261">${x.pendientes||0} pendientes</span> · <span style="color:#2a9d8f">${x.cerrados||0} cerrados</span></span>
+          <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #2a2a40; align-items:center;">
+            <span>
+              <strong style="color:${x.activo ? '#fff' : '#666'}">${escapar(x.nombre)}</strong>
+              ${VENDEDOR ? '' : `<button onclick="toggleVendedor('${escapar(x.nombre)}')" style="margin-left:8px; background:transparent; border:1px solid ${x.activo?'#2a9d8f':'#e63946'}; color:${x.activo?'#2a9d8f':'#e63946'}; padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">${x.activo ? '🟢 Activo' : '🔴 Pausado'}</button>`}
+            </span>
+            <span style="color:#aaa; font-size:0.8rem">${x.total} total · <span style="color:#f4a261">${x.pendientes||0} pend.</span> · <span style="color:#2a9d8f">${x.cerrados||0} cerr.</span></span>
           </div>
         `).join('')
       : '<div style="color:#666;text-align:center;padding:12px">Sin asignaciones todavía</div>';
@@ -336,6 +339,13 @@
   }
 
   document.getElementById('btnToggle').addEventListener('click', toggleAgente);
+
+  // Toggle vendedor activo/pausado (solo desde la vista del jefe)
+  window.toggleVendedor = async (nombre) => {
+    if (!confirm(`¿Cambiar estado de ${nombre}?\n\nSi lo pausás, no va a recibir leads nuevos. Los que ya tiene asignados los conserva.`)) return;
+    await fetch('/api/vendedor/' + encodeURIComponent(nombre) + '/toggle', { method: 'POST' });
+    cargarVendedores();
+  };
 
   // Enviar mensaje como vendedor
   async function enviarMensaje() {

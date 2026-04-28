@@ -146,13 +146,13 @@ app.get('/api/asignaciones', (req, res) => {
     LIMIT 50
   `).all();
   const porVendedor = db.prepare(`
-    SELECT v.nombre, COUNT(a.id) as total,
+    SELECT v.nombre, v.activo, COUNT(a.id) as total,
            SUM(CASE WHEN a.estado = 'pendiente' THEN 1 ELSE 0 END) as pendientes,
            SUM(CASE WHEN a.estado = 'cerrado' THEN 1 ELSE 0 END) as cerrados
     FROM vendedores v
     LEFT JOIN asignaciones a ON a.vendedor_id = v.id
     GROUP BY v.id
-    ORDER BY total DESC
+    ORDER BY v.activo DESC, total DESC
   `).all();
   res.json({ asignaciones: todas, por_vendedor: porVendedor });
 });
@@ -348,6 +348,17 @@ app.get('/distribuir', async (req, res) => {
     console.error('[Distribuir] Error:', err.message);
     res.status(500).send(`<pre style="padding:24px">Error: ${err.message}</pre>`);
   }
+});
+
+// Activar/pausar un vendedor (no recibe leads nuevos si está pausado)
+app.post('/api/vendedor/:nombre/toggle', (req, res) => {
+  const { db } = require('./database');
+  const v = db.prepare('SELECT * FROM vendedores WHERE LOWER(nombre) = LOWER(?)').get(req.params.nombre);
+  if (!v) return res.status(404).json({ error: 'Vendedor no encontrado' });
+  const nuevoEstado = v.activo ? 0 : 1;
+  db.prepare('UPDATE vendedores SET activo = ? WHERE id = ?').run(nuevoEstado, v.id);
+  console.log(`[Vendedor] ${v.nombre} ahora ${nuevoEstado ? 'ACTIVO' : 'PAUSADO'}`);
+  res.json({ ok: true, activo: nuevoEstado === 1 });
 });
 
 // Pausar / activar el agente
