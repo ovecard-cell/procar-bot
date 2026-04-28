@@ -179,12 +179,15 @@
     const v = data.por_vendedor || [];
     cont.innerHTML = v.length > 0
       ? v.map(x => `
-          <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #2a2a40; align-items:center;">
-            <span>
-              <strong style="color:${x.activo ? '#fff' : '#666'}">${escapar(x.nombre)}</strong>
-              ${VENDEDOR ? '' : `<button onclick="toggleVendedor('${escapar(x.nombre)}')" style="margin-left:8px; background:transparent; border:1px solid ${x.activo?'#2a9d8f':'#e63946'}; color:${x.activo?'#2a9d8f':'#e63946'}; padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">${x.activo ? '🟢 Activo' : '🔴 Pausado'}</button>`}
-            </span>
-            <span style="color:#aaa; font-size:0.8rem">${x.total} total · <span style="color:#f4a261">${x.pendientes||0} pend.</span> · <span style="color:#2a9d8f">${x.cerrados||0} cerr.</span></span>
+          <div style="padding:8px 0; border-bottom:1px solid #2a2a40;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span>
+                <strong style="color:${x.activo ? '#fff' : '#666'}">${escapar(x.nombre)}</strong>
+                ${VENDEDOR ? '' : `<button onclick="toggleVendedor('${escapar(x.nombre)}')" style="margin-left:8px; background:transparent; border:1px solid ${x.activo?'#2a9d8f':'#e63946'}; color:${x.activo?'#2a9d8f':'#e63946'}; padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">${x.activo ? '🟢 Activo' : '🔴 Pausado'}</button>`}
+              </span>
+              <span style="color:#aaa; font-size:0.8rem">${x.total} · <span style="color:#f4a261">${x.pendientes||0}</span> · <span style="color:#2a9d8f">${x.cerrados||0}</span></span>
+            </div>
+            ${VENDEDOR ? '' : `<div style="font-size:0.72rem; color:#888; margin-top:3px;">📡 Canales: <span style="color:#C9A84C">${escapar(x.canales || 'todos')}</span> ${VENDEDOR ? '' : `<a href="#" onclick="cambiarCanales('${escapar(x.nombre)}', '${escapar(x.canales || 'todos')}'); return false;" style="color:#888; margin-left:6px;">cambiar</a>`}</div>`}
           </div>
         `).join('')
       : '<div style="color:#666;text-align:center;padding:12px">Sin asignaciones todavía</div>';
@@ -345,6 +348,19 @@
     if (!confirm(`¿Cambiar estado de ${nombre}?\n\nSi lo pausás, no va a recibir leads nuevos. Los que ya tiene asignados los conserva.`)) return;
     await fetch('/api/vendedor/' + encodeURIComponent(nombre) + '/toggle', { method: 'POST' });
     cargarVendedores();
+  };
+
+  window.cambiarCanales = async (nombre, actuales) => {
+    const opciones = 'todos | redes | whatsapp | facebook | instagram\n(coma para combinar: facebook,instagram)';
+    const nuevo = prompt(`Canales que maneja ${nombre}:\n\n${opciones}\n\nActuales:`, actuales);
+    if (!nuevo) return;
+    const r = await fetch('/api/vendedor/' + encodeURIComponent(nombre) + '/canales', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ canales: nuevo.trim() }),
+    });
+    const data = await r.json();
+    if (data.ok) cargarVendedores(); else alert('Error: ' + (data.error || 'desconocido'));
   };
 
   // Enviar mensaje como vendedor

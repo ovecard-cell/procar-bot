@@ -146,7 +146,7 @@ app.get('/api/asignaciones', (req, res) => {
     LIMIT 50
   `).all();
   const porVendedor = db.prepare(`
-    SELECT v.nombre, v.activo, COUNT(a.id) as total,
+    SELECT v.nombre, v.activo, v.canales, COUNT(a.id) as total,
            SUM(CASE WHEN a.estado = 'pendiente' THEN 1 ELSE 0 END) as pendientes,
            SUM(CASE WHEN a.estado = 'cerrado' THEN 1 ELSE 0 END) as cerrados
     FROM vendedores v
@@ -423,6 +423,29 @@ app.post('/api/test-whatsapp', async (req, res) => {
     console.error('[Test WA] Error:', msg);
     res.status(500).json({ error: msg });
   }
+});
+
+// Cambiar canales que maneja un vendedor
+// Body: { canales: 'redes' | 'whatsapp' | 'todos' | 'facebook,instagram' }
+app.post('/api/vendedor/:nombre/canales', (req, res) => {
+  const { db } = require('./database');
+  const { canales } = req.body;
+  if (!canales) return res.status(400).json({ error: 'Falta canales' });
+  const v = db.prepare('SELECT * FROM vendedores WHERE LOWER(nombre) = LOWER(?)').get(req.params.nombre);
+  if (!v) return res.status(404).json({ error: 'Vendedor no encontrado' });
+  db.prepare('UPDATE vendedores SET canales = ? WHERE id = ?').run(canales, v.id);
+  console.log(`[Vendedor] ${v.nombre} ahora maneja: ${canales}`);
+  res.json({ ok: true });
+});
+
+// Configuración rápida: redes (FB+IG) van a Tiki+Facu, todos los demás pausados o whatsapp
+app.post('/api/setup-routing', (req, res) => {
+  const { db } = require('./database');
+  // Tiki y Facu activos en redes (FB + IG)
+  db.prepare("UPDATE vendedores SET activo = 1, canales = 'redes' WHERE LOWER(nombre) IN ('tiki', 'facu')").run();
+  // Antonio y Gustavo activos en whatsapp solamente
+  db.prepare("UPDATE vendedores SET activo = 1, canales = 'whatsapp' WHERE LOWER(nombre) IN ('antonio', 'gustavo')").run();
+  res.json({ ok: true, mensaje: 'Routing configurado: Tiki+Facu en redes, Antonio+Gustavo en WhatsApp' });
 });
 
 // Activar/pausar un vendedor (no recibe leads nuevos si está pausado)

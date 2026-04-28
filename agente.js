@@ -80,8 +80,8 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
   }
 
   if (nombre === 'escalar_a_vendedor') {
-    // Elegir al vendedor con menos asignaciones pendientes
-    const vendedor = obtenerVendedorConMenosAsignaciones();
+    // Elegir al vendedor con menos asignaciones pendientes que maneje este canal
+    const vendedor = obtenerVendedorConMenosAsignaciones(canal);
 
     if (!vendedor) {
       return 'No hay vendedores disponibles en este momento. El cliente fue registrado y lo contactaremos pronto.';
