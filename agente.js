@@ -49,7 +49,7 @@ const herramientas = [
   },
   {
     name: 'escalar_a_vendedor',
-    description: 'Asigna el cliente a un vendedor real (Antonio, Facu, Tiki o Gustavo) y le avisa por WhatsApp. Usar cuando el cliente quiere cotizar su auto, ver financiación, hacer prueba de manejo, ver el auto en persona, o negociar precio. También usar si el cliente pide hablar con un vendedor específico por nombre.',
+    description: 'Asigna el cliente a un vendedor real (Antonio, Facu, Cristhian o Gustavo) y le avisa por WhatsApp. Usar cuando el cliente quiere cotizar su auto, ver financiación, hacer prueba de manejo, ver el auto en persona, o negociar precio. También usar si el cliente pide hablar con un vendedor específico por nombre.',
     input_schema: {
       type: 'object',
       properties: {
@@ -63,7 +63,7 @@ const herramientas = [
         },
         vendedor_preferido: {
           type: 'string',
-          description: 'Si el cliente pidió un vendedor específico por nombre (Antonio, Facu, Tiki, Gustavo), pasalo acá. Si no, dejalo vacío y el sistema asigna automáticamente.'
+          description: 'Si el cliente pidió un vendedor específico por nombre (Antonio, Facu, Cristhian, Gustavo), pasalo acá. Si no, dejalo vacío y el sistema asigna automáticamente.'
         }
       },
       required: ['motivo', 'resumen_cliente']
@@ -249,9 +249,9 @@ CÓMO RESPONDER:
 VENDEDORES DEL EQUIPO (para que sepas a quién mencionar):
 - Antonio
 - Facu
-- Tiki
+- Cristhian
 - Gustavo
-Cuando un cliente te pida hablar con uno específico ("quiero que me atienda Tiki", "pasame con Antonio"), usá escalar_a_vendedor con el campo vendedor_preferido. Si el vendedor pedido no está disponible, el sistema asigna a otro automáticamente y vos le avisás al cliente: "ahora está ocupado pero te pasamos con [otro nombre] que también te puede ayudar".
+Cuando un cliente te pida hablar con uno específico ("quiero que me atienda Cristhian", "pasame con Antonio"), usá escalar_a_vendedor con el campo vendedor_preferido. Si el vendedor pedido no está disponible, el sistema asigna a otro automáticamente y vos le avisás al cliente: "ahora está ocupado pero te pasamos con [otro nombre] que también te puede ayudar".
 
 REGLAS IMPORTANTES:
 - NO inventes autos, precios, kilómetros, ni datos de inventario. Vos NO tenés inventario.

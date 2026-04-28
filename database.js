@@ -304,13 +304,20 @@ function cargarVendedoresEjemplo() {
   if (total === 0) {
     const insert = db.prepare('INSERT INTO vendedores (nombre, telefono, password) VALUES (?, ?, ?)');
     const vendedores = [
-      ['Antonio', '5493794874815', 'antonio1234'],
-      ['Tiki',    '5493794659140', 'tiki1234'],
-      ['Facu',    '5493794146435', 'facu1234'],
-      ['Gustavo', '5493794617070', 'gustavo1234'],
+      ['Antonio',   '5493794874815', 'antonio1234'],
+      ['Cristhian', '5493794659140', 'cristhian1234'],
+      ['Facu',      '5493794146435', 'facu1234'],
+      ['Gustavo',   '5493794617070', 'gustavo1234'],
     ];
     for (const v of vendedores) insert.run(...v);
     console.log('Vendedores cargados con contraseñas iniciales.');
+  }
+
+  // Migración: renombrar Tiki → Cristhian si todavía existe
+  const tiki = db.prepare("SELECT id FROM vendedores WHERE LOWER(nombre) = 'tiki'").get();
+  if (tiki) {
+    db.prepare("UPDATE vendedores SET nombre = 'Cristhian', password = 'cristhian1234' WHERE id = ?").run(tiki.id);
+    console.log('[Migración] Tiki renombrado a Cristhian (password: cristhian1234)');
   }
 
   // Si algún vendedor existente no tiene password, le pongo una default
