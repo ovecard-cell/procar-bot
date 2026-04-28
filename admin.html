@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Dashboard — Procar Bot</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0f1a; color: #e8e8f0; }
+
+  header { background: #1a1a2e; padding: 16px 24px; border-bottom: 2px solid #C9A84C; display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 1.2rem; font-weight: 700; letter-spacing: 0.04em; }
+  header h1 span { color: #C9A84C; }
+  .estado { padding: 6px 14px; border-radius: 16px; font-size: 0.85rem; font-weight: 600; }
+  .estado.activo { background: #2a9d8f; color: white; }
+  .estado.pausado { background: #e63946; color: white; }
+  .toggle { background: transparent; border: 1px solid #C9A84C; color: #C9A84C; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; margin-left: 8px; }
+  .toggle:hover { background: #C9A84C; color: #1a1a2e; }
+  .big-toggle { font-size: 1rem; font-weight: 800; padding: 12px 28px; border-radius: 10px; cursor: pointer; border: none; transition: all 0.15s; min-width: 180px; letter-spacing: 0.05em; text-transform: uppercase; }
+  .big-toggle.encender { background: #2a9d8f; color: white; }
+  .big-toggle.encender:hover { background: #38b39f; transform: scale(1.05); }
+  .big-toggle.apagar { background: #e63946; color: white; }
+  .big-toggle.apagar:hover { background: #ff4d5e; transform: scale(1.05); }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; padding: 24px; }
+  .stat { background: #1a1a2e; padding: 20px; border-radius: 12px; border-left: 4px solid #C9A84C; }
+  .stat .num { font-size: 2.2rem; font-weight: 800; color: #C9A84C; }
+  .stat .label { color: #aaa; font-size: 0.8rem; text-transform: uppercase; margin-top: 6px; letter-spacing: 0.05em; }
+
+  .layout { display: grid; grid-template-columns: 380px 1fr; gap: 16px; padding: 0 24px 24px; height: calc(100vh - 220px); }
+
+  .panel { background: #1a1a2e; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .panel h2 { padding: 14px 16px; background: #232342; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #333; }
+
+  .lista { overflow-y: auto; flex: 1; }
+  .conversacion { padding: 14px 16px; border-bottom: 1px solid #2a2a40; cursor: pointer; transition: background 0.15s; }
+  .conversacion:hover { background: #232342; }
+  .conversacion.activa { background: #2a2a4a; border-left: 3px solid #C9A84C; }
+  .conversacion .top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+  .conversacion .nombre { font-weight: 600; font-size: 0.95rem; }
+  .conversacion .canal { font-size: 0.7rem; padding: 2px 8px; border-radius: 8px; background: #C9A84C; color: #1a1a2e; font-weight: 700; }
+  .conversacion .preview { font-size: 0.85rem; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .conversacion .fecha { font-size: 0.7rem; color: #666; margin-top: 4px; }
+  .vacio { padding: 40px 16px; text-align: center; color: #666; }
+
+  .mensajes { padding: 16px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 75%; padding: 10px 14px; border-radius: 12px; font-size: 0.92rem; line-height: 1.5; white-space: pre-wrap; }
+  .msg.user { background: #2a2a4a; align-self: flex-start; border-bottom-left-radius: 4px; }
+  .msg.assistant { background: #C9A84C; color: #1a1a2e; align-self: flex-end; border-bottom-right-radius: 4px; font-weight: 500; }
+  .msg .meta { font-size: 0.7rem; color: rgba(255,255,255,0.6); margin-top: 4px; }
+  .msg.assistant .meta { color: rgba(0,0,0,0.5); }
+
+  .selecciona { display: flex; align-items: center; justify-content: center; height: 100%; color: #666; flex: 1; }
+
+  .actualizar { margin-left: auto; background: transparent; border: 1px solid #555; color: #aaa; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; }
+  .actualizar:hover { border-color: #C9A84C; color: #C9A84C; }
+
+  .nav-links { padding: 12px 16px; background: #232342; border-bottom: 1px solid #333; display: flex; gap: 8px; flex-wrap: wrap; }
+  .nav-links a { color: #C9A84C; text-decoration: none; font-size: 0.8rem; padding: 4px 10px; border: 1px solid #C9A84C; border-radius: 4px; }
+  .nav-links a:hover { background: #C9A84C; color: #1a1a2e; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>PRO<span>CAR</span> · DASHBOARD</h1>
+  <div style="display: flex; align-items: center; gap: 12px;">
+    <span id="estadoAgente" class="estado">cargando...</span>
+    <button class="big-toggle" id="btnToggle">— —</button>
+  </div>
+</header>
+
+<div class="nav-links">
+  <a href="/analizar?desde=2026-04-20" target="_blank">📊 Análisis con Claude</a>
+  <a href="/distribuir?desde=2026-04-20" target="_blank">📤 Distribuir a vendedores</a>
+  <a href="/demo" target="_blank">💬 Probar Gonzalo</a>
+  <button class="actualizar" onclick="cargarTodo()">↻ Refrescar</button>
+</div>
+
+<div class="stats" id="stats">
+  <div class="stat"><div class="num" id="numMensajes">—</div><div class="label">Mensajes hoy</div></div>
+  <div class="stat"><div class="num" id="numClientes">—</div><div class="label">Clientes únicos</div></div>
+  <div class="stat"><div class="num" id="numLeads">—</div><div class="label">Leads guardados</div></div>
+  <div class="stat"><div class="num" id="numAsignaciones">—</div><div class="label">Asignaciones a vendedores</div></div>
+</div>
+
+<div class="layout">
+  <div class="panel">
+    <h2>Conversaciones</h2>
+    <div class="lista" id="lista"><div class="vacio">Cargando...</div></div>
+  </div>
+  <div class="panel">
+    <h2 id="tituloChat">Mensajes</h2>
+    <div class="mensajes" id="mensajes"><div class="selecciona">Elegí una conversación de la izquierda</div></div>
+  </div>
+</div>
+
+<script>
+  let convActiva = null;
+
+  async function cargarStats() {
+    const res = await fetch('/api/stats');
+    const data = await res.json();
+    document.getElementById('numMensajes').textContent = data.mensajes_hoy;
+    document.getElementById('numClientes').textContent = data.clientes_unicos;
+    document.getElementById('numLeads').textContent = data.leads;
+    document.getElementById('numAsignaciones').textContent = data.asignaciones;
+  }
+
+  async function cargarEstado() {
+    const res = await fetch('/api/estado');
+    const data = await res.json();
+    const el = document.getElementById('estadoAgente');
+    const btn = document.getElementById('btnToggle');
+    el.textContent = data.activo ? '🟢 Agente activo' : '🔴 Pausado';
+    el.className = 'estado ' + (data.activo ? 'activo' : 'pausado');
+    if (data.activo) {
+      btn.textContent = '⏸ Apagar';
+      btn.className = 'big-toggle apagar';
+    } else {
+      btn.textContent = '▶ Encender';
+      btn.className = 'big-toggle encender';
+    }
+  }
+
+  async function cargarConversaciones() {
+    const res = await fetch('/api/conversaciones');
+    const data = await res.json();
+    const lista = document.getElementById('lista');
+
+    if (data.length === 0) {
+      lista.innerHTML = '<div class="vacio">No hay conversaciones todavía.<br><br>Cuando un cliente le escriba a Gonzalo, va a aparecer acá.</div>';
+      return;
+    }
+
+    lista.innerHTML = data.map(c => `
+      <div class="conversacion ${convActiva === c.telefono ? 'activa' : ''}" data-tel="${c.telefono}">
+        <div class="top">
+          <span class="nombre">${escapar(c.nombre || c.telefono)}</span>
+          <span class="canal">${c.canal}</span>
+        </div>
+        <div class="preview">${escapar(c.preview)}</div>
+        <div class="fecha">${formatearFecha(c.ultimo)}</div>
+      </div>
+    `).join('');
+
+    lista.querySelectorAll('.conversacion').forEach(el => {
+      el.addEventListener('click', () => {
+        convActiva = el.dataset.tel;
+        document.querySelectorAll('.conversacion').forEach(c => c.classList.remove('activa'));
+        el.classList.add('activa');
+        cargarMensajes(convActiva);
+      });
+    });
+  }
+
+  async function cargarMensajes(telefono) {
+    const res = await fetch('/api/conversacion/' + encodeURIComponent(telefono));
+    const data = await res.json();
+    const cont = document.getElementById('mensajes');
+    document.getElementById('tituloChat').textContent = `Conversación con ${data.nombre || telefono}`;
+
+    if (!data.mensajes || data.mensajes.length === 0) {
+      cont.innerHTML = '<div class="selecciona">No hay mensajes</div>';
+      return;
+    }
+
+    cont.innerHTML = data.mensajes.map(m => `
+      <div class="msg ${m.rol}">
+        ${escapar(m.contenido)}
+        <div class="meta">${formatearFecha(m.creado_en)}</div>
+      </div>
+    `).join('');
+    cont.scrollTop = cont.scrollHeight;
+  }
+
+  async function toggleAgente() {
+    const res = await fetch('/api/estado');
+    const data = await res.json();
+    await fetch(data.activo ? '/agente/pausar' : '/agente/activar');
+    setTimeout(cargarEstado, 200);
+  }
+
+  function formatearFecha(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const ahora = new Date();
+    const diff = (ahora - d) / 1000 / 60;
+    if (diff < 1) return 'ahora';
+    if (diff < 60) return `hace ${Math.floor(diff)} min`;
+    if (diff < 1440) return `hace ${Math.floor(diff / 60)} h`;
+    return d.toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function escapar(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function cargarTodo() {
+    cargarStats();
+    cargarEstado();
+    cargarConversaciones();
+    if (convActiva) cargarMensajes(convActiva);
+  }
+
+  document.getElementById('btnToggle').addEventListener('click', toggleAgente);
+  cargarTodo();
+  // Auto-refresh cada 10s
+  setInterval(cargarTodo, 10000);
+</script>
+
+</body>
+</html>

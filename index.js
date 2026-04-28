@@ -42,6 +42,53 @@ app.get('/demo', (req, res) => {
   res.sendFile(path.join(__dirname, 'demo.html'));
 });
 
+// Dashboard de admin
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
+// API JSON para el dashboard
+app.get('/api/stats', (req, res) => {
+  const { db } = require('./database');
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const mensajesHoy = db.prepare('SELECT COUNT(*) as n FROM conversaciones WHERE creado_en >= ?').get(hoy.toISOString()).n;
+  const clientes = db.prepare('SELECT COUNT(DISTINCT telefono) as n FROM conversaciones').get().n;
+  const leads = db.prepare('SELECT COUNT(*) as n FROM clientes').get().n;
+  const asignaciones = db.prepare('SELECT COUNT(*) as n FROM asignaciones').get().n;
+  res.json({ mensajes_hoy: mensajesHoy, clientes_unicos: clientes, leads, asignaciones });
+});
+
+app.get('/api/estado', (req, res) => {
+  res.json({ activo: getSetting('agente_activo', 'true') === 'true' });
+});
+
+app.get('/api/conversaciones', (req, res) => {
+  const { db } = require('./database');
+  const rows = db.prepare(`
+    SELECT c.telefono, c.canal, MAX(c.creado_en) as ultimo,
+           cl.nombre,
+           (SELECT contenido FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as preview
+    FROM conversaciones c
+    LEFT JOIN clientes cl ON cl.telefono = c.telefono
+    GROUP BY c.telefono
+    ORDER BY ultimo DESC
+    LIMIT 100
+  `).all();
+  res.json(rows);
+});
+
+app.get('/api/conversacion/:telefono', (req, res) => {
+  const { db } = require('./database');
+  const cliente = db.prepare('SELECT nombre, presupuesto, interes FROM clientes WHERE telefono = ?').get(req.params.telefono);
+  const mensajes = db.prepare(`
+    SELECT rol, contenido, creado_en
+    FROM conversaciones
+    WHERE telefono = ?
+    ORDER BY creado_en ASC
+  `).all(req.params.telefono);
+  res.json({ nombre: cliente?.nombre, presupuesto: cliente?.presupuesto, interes: cliente?.interes, mensajes });
+});
+
 app.post('/chat', async (req, res) => {
   try {
     const { telefono, mensaje } = req.body;
