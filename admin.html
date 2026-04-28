@@ -134,6 +134,50 @@
 
 <script>
   let convActiva = null;
+  let conversacionesPrevias = new Set();
+  let primeraCarga = true;
+  let permisoNotif = false;
+
+  // Pedir permiso de notificaciones
+  if ('Notification' in window) {
+    if (Notification.permission === 'granted') {
+      permisoNotif = true;
+    } else if (Notification.permission !== 'denied') {
+      Notification.requestPermission().then(p => permisoNotif = p === 'granted');
+    }
+  }
+
+  // Sonido beep de aviso (sintetizado, sin archivo externo)
+  function tocarBeep() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = 880; g.gain.value = 0.15;
+      o.start();
+      setTimeout(() => { o.frequency.value = 1100; }, 120);
+      setTimeout(() => { o.stop(); ctx.close(); }, 280);
+    } catch (e) { /* nada */ }
+  }
+
+  function avisarLead(nombre, canal) {
+    tocarBeep();
+    if (permisoNotif) {
+      const n = new Notification('🔔 Lead nuevo en Procar', {
+        body: `${nombre} acaba de escribir por ${canal}`,
+        icon: '/privacy.html', // placeholder
+        tag: 'procar-lead',
+      });
+      n.onclick = () => { window.focus(); n.close(); };
+    }
+    // Badge en el título
+    const titulo = document.title;
+    if (!titulo.startsWith('🔔')) {
+      document.title = '🔔 ' + titulo;
+      window.addEventListener('focus', () => { document.title = titulo; }, { once: true });
+    }
+  }
 
   // Detectar si es vista de vendedor o de jefe
   const match = location.pathname.match(/^\/vendedor\/(.+)$/);
@@ -241,8 +285,23 @@
 
     if (data.length === 0) {
       lista.innerHTML = '<div class="vacio">No hay conversaciones todavía.<br><br>Cuando un cliente le escriba a Gonzalo, va a aparecer acá.</div>';
+      conversacionesPrevias = new Set();
+      primeraCarga = false;
       return;
     }
+
+    // Detectar conversaciones nuevas para avisar
+    const idsActuales = new Set(data.map(c => c.telefono));
+    if (!primeraCarga) {
+      for (const c of data) {
+        if (!conversacionesPrevias.has(c.telefono)) {
+          avisarLead(c.nombre || c.telefono, c.canal);
+          break; // un solo aviso por refresh
+        }
+      }
+    }
+    conversacionesPrevias = idsActuales;
+    primeraCarga = false;
 
     lista.innerHTML = data.map(c => `
       <div class="conversacion ${convActiva === c.telefono ? 'activa' : ''}" data-tel="${c.telefono}">

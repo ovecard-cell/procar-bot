@@ -129,12 +129,69 @@ function limpiarRecordatorios(telefono) {
   db.prepare('DELETE FROM settings WHERE key = ?').run(`recordatorio_${telefono}`);
 }
 
+// ─────────────────────────────────────────────
+// RESCATE: si vendedor se cuelga, el bot retoma
+// ─────────────────────────────────────────────
+async function rescatarConversacionesColgadas() {
+  if (getSetting('agente_activo', 'true') !== 'true') return;
+
+  const ahora = Date.now();
+  const HORA = 60 * 60 * 1000;
+
+  // Conversaciones donde:
+  // - Hubo asignación a vendedor (bot pausado)
+  // - El cliente escribió DESPUÉS de la asignación
+  // - El vendedor NO respondió en >30 min desde que el cliente escribió
+  const candidatos = db.prepare(`
+    SELECT c.telefono, c.canal, c.creado_en as ultimo_msg_cliente,
+           a.creado_en as fecha_asignacion,
+           v.nombre as vendedor_nombre
+    FROM conversaciones c
+    JOIN asignaciones a ON a.cliente_telefono = c.telefono
+    JOIN vendedores v ON v.id = a.vendedor_id
+    WHERE c.rol = 'user'
+      AND c.creado_en = (
+        SELECT MAX(creado_en) FROM conversaciones WHERE telefono = c.telefono
+      )
+      AND a.creado_en = (
+        SELECT MAX(creado_en) FROM asignaciones WHERE cliente_telefono = c.telefono
+      )
+      AND c.creado_en > a.creado_en
+  `).all();
+
+  let rescatados = 0;
+  for (const c of candidatos) {
+    const minSinRespuesta = (ahora - new Date(c.ultimo_msg_cliente).getTime()) / (60 * 1000);
+    // 30 min sin que el vendedor responda en el dashboard
+    if (minSinRespuesta < 30) continue;
+
+    // Reactivar el bot para esta conversación
+    const { setSetting } = require('./database');
+    setSetting(`bot_pausado_${c.telefono}`, 'false');
+
+    const texto = `Disculpá la demora, ${c.vendedor_nombre || 'el vendedor'} está terminando con otro cliente. ¿Querés que te vaya pasando algo más mientras tanto, o esperás que te escriba en un rato?`;
+
+    try {
+      await enviarRecordatorio(c, texto);
+      db.prepare('INSERT INTO conversaciones (telefono, rol, contenido, canal) VALUES (?, ?, ?, ?)')
+        .run(c.telefono, 'assistant', `[bot rescate] ${texto}`, c.canal);
+      console.log(`[Rescate] Bot retomó conversación de ${c.telefono} (vendedor ${c.vendedor_nombre} colgado ${minSinRespuesta.toFixed(0)} min)`);
+      rescatados++;
+    } catch (err) {
+      console.error(`[Rescate] Error con ${c.telefono}:`, err.message);
+    }
+  }
+
+  if (rescatados > 0) console.log(`[Rescate] ${rescatados} conversaciones retomadas por el bot`);
+}
+
 function iniciarCron() {
-  // Cada 15 minutos para reaccionar más rápido a los pasos de 2h/6h/18h
+  // Cada 15 minutos para recordatorios y rescates
   cron.schedule('*/15 * * * *', () => {
     procesarRecordatorios().catch(err => console.error('[Recordatorios] Crash:', err.message));
+    rescatarConversacionesColgadas().catch(err => console.error('[Rescate] Crash:', err.message));
   });
-  console.log('[Recordatorios] Cron iniciado (cada 15 min, cadencia 2h/6h/18h)');
+  console.log('[Recordatorios] Cron iniciado (cada 15 min, recordatorios + rescate)');
 }
 
 module.exports = { iniciarCron, procesarRecordatorios, limpiarRecordatorios };
