@@ -63,7 +63,7 @@
 <body>
 
 <header>
-  <h1>PRO<span>CAR</span> · DASHBOARD</h1>
+  <h1>PRO<span>CAR</span> · <span id="modoTitulo">DASHBOARD</span></h1>
   <div style="display: flex; align-items: center; gap: 12px;">
     <span id="estadoAgente" class="estado">cargando...</span>
     <button class="big-toggle" id="btnToggle">— —</button>
@@ -110,8 +110,20 @@
 <script>
   let convActiva = null;
 
+  // Detectar si es vista de vendedor o de jefe
+  const match = location.pathname.match(/^\/vendedor\/(.+)$/);
+  const VENDEDOR = match ? decodeURIComponent(match[1]) : null;
+  const FILTRO = VENDEDOR ? `?vendedor=${encodeURIComponent(VENDEDOR)}` : '';
+
+  if (VENDEDOR) {
+    document.getElementById('modoTitulo').textContent = `VENDEDOR · ${VENDEDOR.toUpperCase()}`;
+    // Ocultar el botón de pausar el agente para vendedores (solo el jefe)
+    document.getElementById('btnToggle').style.display = 'none';
+    document.getElementById('estadoAgente').style.display = 'none';
+  }
+
   async function cargarStats() {
-    const res = await fetch('/api/stats');
+    const res = await fetch('/api/stats' + FILTRO);
     const data = await res.json();
     document.getElementById('numMensajes').textContent = data.mensajes_hoy;
     document.getElementById('numClientes').textContent = data.clientes_unicos;
@@ -176,7 +188,7 @@
   }
 
   async function cargarConversaciones() {
-    const res = await fetch('/api/conversaciones');
+    const res = await fetch('/api/conversaciones' + FILTRO);
     const data = await res.json();
     const lista = document.getElementById('lista');
 

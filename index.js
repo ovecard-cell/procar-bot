@@ -41,15 +41,52 @@ app.get('/demo', (req, res) => {
   res.sendFile(path.join(__dirname, 'demo.html'));
 });
 
-// Dashboard de admin
+// Dashboard de admin (jefe ve todo)
 app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
+// Dashboard por vendedor (solo ve sus asignados)
+app.get('/vendedor/:nombre', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
 // API JSON para el dashboard
 app.get('/api/stats', (req, res) => {
   const { db } = require('./database');
+  const vendedor = req.query.vendedor;
   const hoy = new Date(); hoy.setHours(0,0,0,0);
+
+  if (vendedor) {
+    // Stats filtradas para un vendedor
+    const filtroSql = `
+      AND c.telefono IN (
+        SELECT a.cliente_telefono FROM asignaciones a
+        JOIN vendedores v ON v.id = a.vendedor_id
+        WHERE LOWER(v.nombre) = LOWER(?)
+      )
+    `;
+    const mensajesHoy = db.prepare(`SELECT COUNT(*) as n FROM conversaciones c WHERE c.creado_en >= ? ${filtroSql}`).get(hoy.toISOString(), vendedor).n;
+    const clientes = db.prepare(`SELECT COUNT(DISTINCT c.telefono) as n FROM conversaciones c WHERE 1=1 ${filtroSql}`).get(vendedor).n;
+    const asignacionesV = db.prepare(`
+      SELECT COUNT(*) as total,
+             SUM(CASE WHEN estado='pendiente' THEN 1 ELSE 0 END) as pendientes,
+             SUM(CASE WHEN estado='cerrado' THEN 1 ELSE 0 END) as cerrados
+      FROM asignaciones a
+      JOIN vendedores v ON v.id = a.vendedor_id
+      WHERE LOWER(v.nombre) = LOWER(?)
+    `).get(vendedor);
+    return res.json({
+      vendedor,
+      mensajes_hoy: mensajesHoy,
+      clientes_unicos: clientes,
+      leads: clientes,
+      asignaciones: asignacionesV.total || 0,
+      pendientes: asignacionesV.pendientes || 0,
+      cerrados: asignacionesV.cerrados || 0,
+    });
+  }
+
   const mensajesHoy = db.prepare('SELECT COUNT(*) as n FROM conversaciones WHERE creado_en >= ?').get(hoy.toISOString()).n;
   const clientes = db.prepare('SELECT COUNT(DISTINCT telefono) as n FROM conversaciones').get().n;
   const leads = db.prepare('SELECT COUNT(*) as n FROM clientes').get().n;
@@ -92,7 +129,9 @@ app.get('/api/estado', (req, res) => {
 
 app.get('/api/conversaciones', (req, res) => {
   const { db } = require('./database');
-  const rows = db.prepare(`
+  const vendedor = req.query.vendedor;
+
+  let query = `
     SELECT c.telefono, c.canal, MAX(c.creado_en) as ultimo,
            cl.nombre,
            (SELECT contenido FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as preview,
@@ -100,10 +139,22 @@ app.get('/api/conversaciones', (req, res) => {
             WHERE a.cliente_telefono = c.telefono ORDER BY a.creado_en DESC LIMIT 1) as vendedor_asignado
     FROM conversaciones c
     LEFT JOIN clientes cl ON cl.telefono = c.telefono
-    GROUP BY c.telefono
-    ORDER BY ultimo DESC
-    LIMIT 100
-  `).all();
+  `;
+  const params = [];
+
+  if (vendedor) {
+    query += `
+      WHERE c.telefono IN (
+        SELECT a.cliente_telefono FROM asignaciones a
+        JOIN vendedores v ON v.id = a.vendedor_id
+        WHERE LOWER(v.nombre) = LOWER(?)
+      )
+    `;
+    params.push(vendedor);
+  }
+
+  query += ` GROUP BY c.telefono ORDER BY ultimo DESC LIMIT 100`;
+  const rows = db.prepare(query).all(...params);
   res.json(rows);
 });
 
