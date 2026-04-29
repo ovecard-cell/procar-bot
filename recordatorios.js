@@ -53,9 +53,11 @@ async function enviarRecordatorio(cliente, texto) {
       { headers: { Authorization: `Bearer ${config.INSTAGRAM_ACCESS_TOKEN}`, 'Content-Type': 'application/json' } }
     );
   } else if (cliente.canal === 'whatsapp' && config.WHATSAPP_PHONE_ID) {
+    const { normalizarTelefonoWA } = require('./mensajero');
+    const destino = normalizarTelefonoWA(cliente.telefono);
     await axios.post(
       `https://graph.facebook.com/v19.0/${config.WHATSAPP_PHONE_ID}/messages`,
-      { messaging_product: 'whatsapp', to: cliente.telefono, type: 'text', text: { body: texto } },
+      { messaging_product: 'whatsapp', to: destino, type: 'text', text: { body: texto } },
       { headers: { Authorization: `Bearer ${config.WA_TOKEN}`, 'Content-Type': 'application/json' } }
     );
   } else {

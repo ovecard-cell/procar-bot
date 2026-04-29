@@ -315,11 +315,13 @@ async function recibirMensaje(req, res) {
 
 async function enviarWhatsApp(phoneId, destinatario, texto) {
   try {
+    const { normalizarTelefonoWA } = require('./mensajero');
+    const destino = normalizarTelefonoWA(destinatario);
     await axios.post(
       `https://graph.facebook.com/v19.0/${phoneId}/messages`,
       {
         messaging_product: 'whatsapp',
-        to: destinatario,
+        to: destino,
         type: 'text',
         text: { body: texto }
       },
