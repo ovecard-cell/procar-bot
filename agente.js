@@ -191,18 +191,6 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
       return 'No hay vendedores disponibles en este momento. El cliente fue registrado y lo contactaremos pronto.';
     }
 
-    // Crear la asignación en la base de datos
-    crearAsignacion({
-      cliente_telefono: telefono,
-      vendedor_id: vendedor.id,
-      motivo: input.motivo,
-    });
-
-    // Pausar el bot para esta conversación: el vendedor toma el chat
-    const { setSetting } = require('./database');
-    setSetting(`bot_pausado_${telefono}`, 'true');
-    console.log(`[Agente] Bot pausado para ${telefono} - vendedor ${vendedor.nombre} toma el chat`);
-
     // Resolver el nombre del cliente: 1) lo que pasó el LLM, 2) la tabla clientes,
     // 3) fallback con últimos dígitos del teléfono
     let nombreCliente = (input.nombre_cliente || '').trim();
@@ -214,20 +202,40 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
     const vehiculoInteres = (input.vehiculo_interes || '').trim() || 'consulta general';
     const motivoCorto = (input.motivo || input.resumen_cliente || 'sin detalle').trim();
 
-    // Enviar WhatsApp al vendedor usando la plantilla aprobada por Meta.
-    // Si la plantilla todavía no está aprobada o falla, lo log pero no rompemos
-    // el escalado — el lead ya quedó guardado y visible en el dashboard.
-    try {
-      await enviarLeadAsignado(vendedor.telefono, {
-        cliente: nombreCliente,
-        vehiculo: vehiculoInteres,
-        consulta: motivoCorto,
-      });
-    } catch (err) {
-      console.error(`[Escalado] Error enviando plantilla a ${vendedor.nombre}:`, err.response?.data?.error?.message || err.message);
-    }
+    // Crear la asignación en la base de datos con todos los datos para la plantilla,
+    // así el cron de notificaciones puede mandarla después si estamos fuera de horario.
+    const asignacionId = crearAsignacion({
+      cliente_telefono: telefono,
+      vendedor_id: vendedor.id,
+      motivo: motivoCorto,
+      cliente_nombre: nombreCliente,
+      vehiculo_interes: vehiculoInteres,
+    });
 
-    return `Cliente asignado a ${vendedor.nombre}. Se le envió un WhatsApp con los datos del cliente.`;
+    // Pausar el bot para esta conversación: el vendedor toma el chat
+    const { setSetting, marcarAsignacionNotificada } = require('./database');
+    setSetting(`bot_pausado_${telefono}`, 'true');
+    console.log(`[Agente] Bot pausado para ${telefono} - vendedor ${vendedor.nombre} toma el chat`);
+
+    // ¿El vendedor asignado está disponible AHORA para recibir leads?
+    // (Cada vendedor controla esto desde su dashboard con un botón.)
+    if (vendedor.disponible) {
+      try {
+        await enviarLeadAsignado(vendedor.telefono, {
+          cliente: nombreCliente,
+          vehiculo: vehiculoInteres,
+          consulta: motivoCorto,
+        });
+        marcarAsignacionNotificada(asignacionId);
+      } catch (err) {
+        console.error(`[Escalado] Error enviando plantilla a ${vendedor.nombre}:`, err.response?.data?.error?.message || err.message);
+        // Lo dejamos sin notificar; el cron reintenta cuando esté disponible.
+      }
+      return `Cliente asignado a ${vendedor.nombre}. Se le envió un WhatsApp con los datos del cliente.`;
+    } else {
+      console.log(`[Escalado] ${vendedor.nombre} está como "no recibir leads" — la notificación queda en cola hasta que se ponga disponible.`);
+      return `Cliente asignado a ${vendedor.nombre}, pero está fuera de turno. La notificación por WhatsApp se manda en cuanto vuelva a estar disponible.`;
+    }
   }
 
   return 'Herramienta no reconocida.';
@@ -462,6 +470,28 @@ function sanitizarSaliente(texto) {
   return limpio;
 }
 
+// ─────────────────────────────────────────────
+// HORARIO DE VENDEDORES — usado para encolar notificaciones fuera de horario
+// Lun-Sáb: 9-13 y 16:30-21. Domingos: cerrado.
+// ─────────────────────────────────────────────
+function enHorarioVendedores(fecha = new Date()) {
+  // Convertimos al "YYYY-MM-DD HH:MM" de Argentina y de ahí sacamos el día de la semana y la hora
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const partes = Object.fromEntries(fmt.formatToParts(fecha).map(p => [p.type, p.value]));
+  const dia = partes.weekday; // Mon, Tue, ..., Sun
+  if (dia === 'Sun') return false;
+  const hora = parseInt(partes.hour, 10);
+  const min = parseInt(partes.minute, 10);
+  const minutos = hora * 60 + min;
+  // 9:00 = 540, 13:00 = 780, 16:30 = 990, 21:00 = 1260
+  if (minutos >= 540 && minutos < 780) return true;
+  if (minutos >= 990 && minutos < 1260) return true;
+  return false;
+}
+
 // Devuelve la fecha/hora actual en Argentina (UTC-3) en un texto que Claude pueda leer
 // para saber si está dentro o fuera del horario de los vendedores.
 function contextoTemporal() {
@@ -576,4 +606,4 @@ Tu tarea en UNA sola respuesta corta:
   return sanitizarSaliente(crudo);
 }
 
-module.exports = { procesarMensaje, generarRespuestaRescate };
+module.exports = { procesarMensaje, generarRespuestaRescate, enHorarioVendedores };

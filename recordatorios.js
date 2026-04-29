@@ -199,13 +199,64 @@ async function rescatarConversacionesColgadas() {
   if (rescatados > 0) console.log(`[Rescate] ${rescatados} conversaciones retomadas por el bot`);
 }
 
+// ─────────────────────────────────────────────
+// COLA DE NOTIFICACIONES A VENDEDORES
+// Si entra un lead cuando el vendedor asignado tiene "no recibir leads"
+// activado, no le tocamos la puerta. Encolamos y mandamos cuando se ponga
+// como "disponible" otra vez.
+// ─────────────────────────────────────────────
+async function procesarColaDeNotificacionesAVendedores() {
+  const { asignacionesPendientesDeNotificar, marcarAsignacionNotificada } = require('./database');
+  const { enviarLeadAsignado } = require('./mensajero');
+  const pendientes = asignacionesPendientesDeNotificar();
+  if (pendientes.length === 0) return;
+
+  let enviados = 0, fallados = 0, salteados = 0;
+  for (const a of pendientes) {
+    if (!a.vendedor_activo) {
+      // Pausado por el admin — no le mandamos nunca. Marcamos como notificado
+      // para no dejar la asignación colgada (igual queda visible en el dashboard).
+      marcarAsignacionNotificada(a.id);
+      console.log(`[Cola WA] Asignación ${a.id} de ${a.vendedor_nombre} (pausado por admin): salteada.`);
+      salteados++;
+      continue;
+    }
+    if (!a.vendedor_disponible) {
+      // Vendedor todavía con "no recibir leads" — esperamos a que vuelva.
+      continue;
+    }
+    try {
+      await enviarLeadAsignado(a.vendedor_telefono, {
+        cliente: a.cliente_nombre || `Cliente ${String(a.cliente_telefono).slice(-4)}`,
+        vehiculo: a.vehiculo_interes || 'consulta general',
+        consulta: a.motivo || 'sin detalle',
+      });
+      marcarAsignacionNotificada(a.id);
+      enviados++;
+      console.log(`[Cola WA] Notificada asignación ${a.id} → ${a.vendedor_nombre}`);
+    } catch (err) {
+      fallados++;
+      console.error(`[Cola WA] Error notificando asignación ${a.id} → ${a.vendedor_nombre}:`,
+        err.response?.data?.error?.message || err.message);
+    }
+  }
+  if (enviados > 0 || fallados > 0 || salteados > 0) {
+    console.log(`[Cola WA] Vuelta: ${enviados} notificadas, ${fallados} con error, ${salteados} salteadas.`);
+  }
+}
+
 function iniciarCron() {
   // Cada 15 minutos para recordatorios y rescates
   cron.schedule('*/15 * * * *', () => {
     procesarRecordatorios().catch(err => console.error('[Recordatorios] Crash:', err.message));
     rescatarConversacionesColgadas().catch(err => console.error('[Rescate] Crash:', err.message));
   });
-  console.log('[Recordatorios] Cron iniciado (cada 15 min, recordatorios + rescate)');
+  // Cada 5 minutos chequeamos la cola de notificaciones a vendedores. Es liviano:
+  // si estamos fuera de horario, ni se conecta. Si entramos en horario, vacía la cola.
+  cron.schedule('*/5 * * * *', () => {
+    procesarColaDeNotificacionesAVendedores().catch(err => console.error('[Cola WA] Crash:', err.message));
+  });
+  console.log('[Recordatorios] Cron iniciado (recordatorios + rescate cada 15min, cola WA cada 5min)');
 }
 
-module.exports = { iniciarCron, procesarRecordatorios, limpiarRecordatorios };
+module.exports = { iniciarCron, procesarRecordatorios, limpiarRecordatorios, procesarColaDeNotificacionesAVendedores };

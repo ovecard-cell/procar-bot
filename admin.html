@@ -22,6 +22,20 @@
   .big-toggle.apagar { background: #e63946; color: white; }
   .big-toggle.apagar:hover { background: #ff4d5e; transform: scale(1.05); }
 
+  /* Banner del vendedor con su estado de disponibilidad — solo en /vendedor/X */
+  .banner-disponibilidad { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; margin: 0; }
+  .banner-disponibilidad.on  { background: linear-gradient(90deg, #2a9d8f33, #2a9d8f11); border-bottom: 2px solid #2a9d8f; }
+  .banner-disponibilidad.off { background: linear-gradient(90deg, #e6394633, #e6394611); border-bottom: 2px solid #e63946; }
+  .banner-disponibilidad .estado-txt { font-size: 1rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+  .banner-disponibilidad.on  .estado-txt { color: #2a9d8f; }
+  .banner-disponibilidad.off .estado-txt { color: #e63946; }
+  .banner-disponibilidad .sub-txt { font-size: 0.85rem; color: #aaa; }
+  .btn-disponibilidad { padding: 14px 28px; border: none; border-radius: 10px; cursor: pointer; font-weight: 800; font-size: 1rem; letter-spacing: 0.05em; text-transform: uppercase; min-width: 220px; transition: all 0.15s; }
+  .btn-disponibilidad.salir   { background: #e63946; color: white; }
+  .btn-disponibilidad.salir:hover { background: #ff4d5e; transform: scale(1.03); }
+  .btn-disponibilidad.entrar  { background: #2a9d8f; color: white; }
+  .btn-disponibilidad.entrar:hover { background: #38b39f; transform: scale(1.03); }
+
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; padding: 24px; }
   .stat { background: #1a1a2e; padding: 20px; border-radius: 12px; border-left: 4px solid #C9A84C; }
   .stat .num { font-size: 2.2rem; font-weight: 800; color: #C9A84C; }
@@ -85,6 +99,15 @@
     <button class="big-toggle" id="btnToggle">— —</button>
   </div>
 </header>
+
+<!-- Banner de disponibilidad del vendedor: solo se muestra en /vendedor/:nombre -->
+<div id="bannerDispo" class="banner-disponibilidad" style="display:none">
+  <div>
+    <div id="bannerDispoTxt" class="estado-txt">—</div>
+    <div id="bannerDispoSub" class="sub-txt">—</div>
+  </div>
+  <button id="btnDispo" class="btn-disponibilidad entrar">— —</button>
+</div>
 
 <div class="nav-links">
   <a href="/analizar?desde=2026-04-20" target="_blank">📊 Análisis con Claude</a>
@@ -192,7 +215,47 @@
     // Ocultar el botón de pausar el agente para vendedores (solo el jefe)
     document.getElementById('btnToggle').style.display = 'none';
     document.getElementById('estadoAgente').style.display = 'none';
+    // Mostrar el banner de disponibilidad del vendedor
+    document.getElementById('bannerDispo').style.display = 'flex';
   }
+
+  // Carga el estado de disponibilidad del vendedor logueado y arma el banner.
+  async function cargarMiDisponibilidad() {
+    if (!VENDEDOR) return;
+    try {
+      const r = await fetch('/api/asignaciones');
+      const d = await r.json();
+      const yo = (d.por_vendedor || []).find(x => x.nombre.toLowerCase() === VENDEDOR.toLowerCase());
+      if (!yo) return;
+      const banner = document.getElementById('bannerDispo');
+      const txt = document.getElementById('bannerDispoTxt');
+      const sub = document.getElementById('bannerDispoSub');
+      const btn = document.getElementById('btnDispo');
+      if (yo.disponible) {
+        banner.className = 'banner-disponibilidad on';
+        txt.textContent = '🟢 RECIBIENDO LEADS';
+        sub.textContent = 'Cuando entre un cliente nuevo, te llega un WhatsApp.';
+        btn.className = 'btn-disponibilidad salir';
+        btn.textContent = '⏸ Salir de turno';
+      } else {
+        banner.className = 'banner-disponibilidad off';
+        txt.textContent = '🔴 FUERA DE TURNO';
+        sub.textContent = 'Los leads que entren quedan en cola hasta que vuelvas.';
+        btn.className = 'btn-disponibilidad entrar';
+        btn.textContent = '▶ Empezar a recibir leads';
+      }
+    } catch (err) {
+      console.error('Error cargando disponibilidad:', err);
+    }
+  }
+
+  document.getElementById('btnDispo').addEventListener('click', async () => {
+    if (!VENDEDOR) return;
+    const r = await fetch('/api/vendedor/' + encodeURIComponent(VENDEDOR) + '/disponibilidad', { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok) return alert('Error: ' + (d.error || 'no se pudo cambiar la disponibilidad'));
+    cargarMiDisponibilidad();
+  });
 
   async function cargarStats() {
     const res = await fetch('/api/stats' + FILTRO);
@@ -225,18 +288,29 @@
     const cont = document.getElementById('statsVendedores');
     const v = data.por_vendedor || [];
     cont.innerHTML = v.length > 0
-      ? v.map(x => `
+      ? v.map(x => {
+          const dispoPill = x.activo
+            ? (x.disponible
+                ? `<span style="margin-left:6px; background:#2a9d8f; color:white; padding:2px 8px; border-radius:4px; font-size:0.7rem; font-weight:700;">EN TURNO</span>`
+                : `<span style="margin-left:6px; background:#666; color:white; padding:2px 8px; border-radius:4px; font-size:0.7rem; font-weight:700;">FUERA</span>`)
+            : '';
+          const colaPill = x.sin_notificar > 0
+            ? ` <span title="Leads esperando notificación al vendedor" style="margin-left:4px; color:#f4a261; font-size:0.72rem;">⏳ ${x.sin_notificar} en cola</span>`
+            : '';
+          return `
           <div style="padding:8px 0; border-bottom:1px solid #2a2a40;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <span>
                 <strong style="color:${x.activo ? '#fff' : '#666'}">${escapar(x.nombre)}</strong>
                 ${VENDEDOR ? '' : `<button onclick="toggleVendedor('${escapar(x.nombre)}')" style="margin-left:8px; background:transparent; border:1px solid ${x.activo?'#2a9d8f':'#e63946'}; color:${x.activo?'#2a9d8f':'#e63946'}; padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">${x.activo ? '🟢 Activo' : '🔴 Pausado'}</button>`}
+                ${dispoPill}${colaPill}
               </span>
               <span style="color:#aaa; font-size:0.8rem">${x.total} · <span style="color:#f4a261">${x.pendientes||0}</span> · <span style="color:#2a9d8f">${x.cerrados||0}</span></span>
             </div>
             ${VENDEDOR ? '' : `<div style="font-size:0.72rem; color:#888; margin-top:3px;">📡 Canales: <span style="color:#C9A84C">${escapar(x.canales || 'todos')}</span> ${VENDEDOR ? '' : `<a href="#" onclick="cambiarCanales('${escapar(x.nombre)}', '${escapar(x.canales || 'todos')}'); return false;" style="color:#888; margin-left:6px;">cambiar</a>`}</div>`}
           </div>
-        `).join('')
+        `;
+        }).join('')
       : '<div style="color:#666;text-align:center;padding:12px">Sin asignaciones todavía</div>';
 
     // Últimas asignaciones (lista de eventos)
@@ -391,20 +465,41 @@
     setTimeout(cargarEstado, 200);
   }
 
+  // SQLite guarda timestamps en UTC pero sin marcar la zona ('2026-04-29 05:03:00').
+  // JS los lee como hora LOCAL si no aclaramos. Forzamos que se interpreten como UTC
+  // y los mostramos en hora de Argentina (UTC-3).
+  const TZ_AR = 'America/Argentina/Buenos_Aires';
+  const FMT_HORA = new Intl.DateTimeFormat('es-AR', {
+    timeZone: TZ_AR, hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const FMT_FECHA_HORA = new Intl.DateTimeFormat('es-AR', {
+    timeZone: TZ_AR, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+
+  function parsearComoUTC(iso) {
+    if (!iso) return null;
+    // Si ya tiene 'T' y termina en 'Z' u offset, está bien marcado.
+    if (iso.includes('T') && (iso.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(iso))) {
+      return new Date(iso);
+    }
+    // Sino lo armamos como UTC explícito.
+    const norm = iso.replace(' ', 'T');
+    return new Date(norm + (norm.endsWith('Z') ? '' : 'Z'));
+  }
+
   function formatearFecha(iso) {
     if (!iso) return '';
-    const d = new Date(iso);
+    const d = parsearComoUTC(iso);
+    if (!d || isNaN(d.getTime())) return '';
     const ahora = new Date();
     const diff = (ahora - d) / 1000 / 60;
-    const hh = String(d.getHours()).padStart(2, '0');
-    const mm = String(d.getMinutes()).padStart(2, '0');
-    const horaExacta = `${hh}:${mm}`;
+    const horaExacta = FMT_HORA.format(d);
 
     // Mostrar siempre la hora exacta + cuánto hace, para saber con precisión cuándo pasó cada cosa
     if (diff < 1) return `${horaExacta} (ahora)`;
     if (diff < 60) return `${horaExacta} · hace ${Math.floor(diff)} min`;
     if (diff < 1440) return `${horaExacta} · hace ${Math.floor(diff / 60)} h`;
-    return d.toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return FMT_FECHA_HORA.format(d);
   }
 
   function escapar(s) {
@@ -416,6 +511,7 @@
     cargarEstado();
     cargarConversaciones();
     cargarVendedores();
+    cargarMiDisponibilidad();
     if (convActiva) cargarMensajes(convActiva);
   }
 

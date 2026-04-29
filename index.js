@@ -272,9 +272,10 @@ app.get('/api/asignaciones', (req, res) => {
     LIMIT 50
   `).all();
   const porVendedor = db.prepare(`
-    SELECT v.nombre, v.activo, v.canales, COUNT(a.id) as total,
+    SELECT v.nombre, v.activo, v.disponible, v.canales, COUNT(a.id) as total,
            SUM(CASE WHEN a.estado = 'pendiente' THEN 1 ELSE 0 END) as pendientes,
-           SUM(CASE WHEN a.estado = 'cerrado' THEN 1 ELSE 0 END) as cerrados
+           SUM(CASE WHEN a.estado = 'cerrado' THEN 1 ELSE 0 END) as cerrados,
+           SUM(CASE WHEN a.notificado_en IS NULL THEN 1 ELSE 0 END) as sin_notificar
     FROM vendedores v
     LEFT JOIN asignaciones a ON a.vendedor_id = v.id
     GROUP BY v.id
@@ -631,6 +632,25 @@ app.get('/api/admin/passwords', (req, res) => {
   const { db } = require('./database');
   const vendedores = db.prepare('SELECT nombre, password FROM vendedores').all();
   res.json(vendedores);
+});
+
+// Toggle de DISPONIBILIDAD: el vendedor mismo lo prende/apaga desde su dashboard.
+// "Recibir leads" = disponible 1, "No recibir" = disponible 0.
+// Esto es distinto de "activo" (eso solo lo cambia el admin para pausar a alguien).
+app.post('/api/vendedor/:nombre/disponibilidad', (req, res) => {
+  const autenticado = getVendedorAutenticado(req);
+  const { db } = require('./database');
+  const v = db.prepare('SELECT * FROM vendedores WHERE LOWER(nombre) = LOWER(?)').get(req.params.nombre);
+  if (!v) return res.status(404).json({ error: 'Vendedor no encontrado' });
+  // Solo el vendedor mismo (o el admin desde /admin) puede cambiar su disponibilidad.
+  // Permitimos el cambio si está logueado como ese vendedor o si viene del admin (sin cookie de vendedor).
+  if (autenticado && autenticado.toLowerCase() !== v.nombre.toLowerCase()) {
+    return res.status(403).json({ error: 'Solo podés cambiar tu propia disponibilidad' });
+  }
+  const nuevo = v.disponible ? 0 : 1;
+  db.prepare('UPDATE vendedores SET disponible = ? WHERE id = ?').run(nuevo, v.id);
+  console.log(`[Vendedor] ${v.nombre} ahora ${nuevo ? 'DISPONIBLE para leads' : 'fuera de turno (no recibe leads)'}`);
+  res.json({ ok: true, disponible: !!nuevo });
 });
 
 // Activar/pausar un vendedor (no recibe leads nuevos si está pausado)

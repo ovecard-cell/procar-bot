@@ -95,6 +95,7 @@ function inicializarDB() {
       nombre TEXT NOT NULL,
       telefono TEXT UNIQUE NOT NULL,
       activo INTEGER DEFAULT 1,
+      disponible INTEGER DEFAULT 1,
       canales TEXT DEFAULT 'todos',
       password TEXT
     )
@@ -103,6 +104,7 @@ function inicializarDB() {
   // Migración: agregar columnas si la tabla ya existía
   try { db.exec("ALTER TABLE vendedores ADD COLUMN canales TEXT DEFAULT 'todos'"); } catch (e) { /* ya existe */ }
   try { db.exec("ALTER TABLE vendedores ADD COLUMN password TEXT"); } catch (e) { /* ya existe */ }
+  try { db.exec("ALTER TABLE vendedores ADD COLUMN disponible INTEGER DEFAULT 1"); } catch (e) { /* ya existe */ }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS asignaciones (
@@ -113,11 +115,19 @@ function inicializarDB() {
       estado TEXT DEFAULT 'pendiente',
       seguimiento_enviado INTEGER DEFAULT 0,
       resultado TEXT,
+      cliente_nombre TEXT,
+      vehiculo_interes TEXT,
+      notificado_en DATETIME,
       creado_en DATETIME DEFAULT CURRENT_TIMESTAMP,
       actualizado_en DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (vendedor_id) REFERENCES vendedores(id)
     )
   `);
+
+  // Migración: campos para encolar notificaciones a vendedores fuera de horario
+  try { db.exec('ALTER TABLE asignaciones ADD COLUMN cliente_nombre TEXT'); } catch (e) { /* ya existe */ }
+  try { db.exec('ALTER TABLE asignaciones ADD COLUMN vehiculo_interes TEXT'); } catch (e) { /* ya existe */ }
+  try { db.exec('ALTER TABLE asignaciones ADD COLUMN notificado_en DATETIME'); } catch (e) { /* ya existe */ }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -227,57 +237,64 @@ function obtenerVendedores() {
 }
 
 function obtenerVendedorConMenosAsignaciones(canal) {
-  // Elegir el vendedor activo con menos asignaciones pendientes,
-  // que además maneje el canal del lead (canales = 'todos' o contiene el canal).
-  // canal puede ser: 'messenger', 'facebook', 'instagram', 'whatsapp', 'demo'
-  // Tratamos messenger y facebook como equivalentes para routing.
+  // Elegir el vendedor con menos asignaciones pendientes.
+  // Preferencia: 1) activo + disponible + maneja el canal,
+  //              2) activo + disponible (cualquier canal),
+  //              3) activo (aunque no esté disponible — la notificación queda en cola)
   const canalNormalizado = (canal === 'messenger' || canal === 'facebook') ? 'facebook' : (canal || '');
-  const filtros = [
+  const filtrosCanal = [
     `canales = 'todos'`,
     `canales LIKE '%${canalNormalizado}%'`,
   ];
-  // Permitir el shortcut "redes" o "social" para FB + IG
   if (canalNormalizado === 'facebook' || canalNormalizado === 'instagram') {
-    filtros.push(`canales LIKE '%redes%'`);
-    filtros.push(`canales LIKE '%social%'`);
+    filtrosCanal.push(`canales LIKE '%redes%'`);
+    filtrosCanal.push(`canales LIKE '%social%'`);
   }
-  const where = filtros.map(f => `(${f})`).join(' OR ');
+  const whereCanal = filtrosCanal.map(f => `(${f})`).join(' OR ');
 
-  const vendedor = db.prepare(`
+  const elegir = (whereExtra) => db.prepare(`
     SELECT v.*, COUNT(a.id) as asignaciones_pendientes
     FROM vendedores v
     LEFT JOIN asignaciones a ON v.id = a.vendedor_id AND a.estado = 'pendiente'
-    WHERE v.activo = 1 AND (${where})
+    WHERE v.activo = 1 ${whereExtra}
     GROUP BY v.id
     ORDER BY asignaciones_pendientes ASC
     LIMIT 1
   `).get();
 
-  // Fallback: si nadie maneja ese canal específico, traer cualquier activo
-  if (!vendedor) {
-    return db.prepare(`
-      SELECT v.*, COUNT(a.id) as asignaciones_pendientes
-      FROM vendedores v
-      LEFT JOIN asignaciones a ON v.id = a.vendedor_id AND a.estado = 'pendiente'
-      WHERE v.activo = 1
-      GROUP BY v.id
-      ORDER BY asignaciones_pendientes ASC
-      LIMIT 1
-    `).get();
-  }
-  return vendedor;
+  return elegir(`AND v.disponible = 1 AND (${whereCanal})`)
+      || elegir(`AND v.disponible = 1`)
+      || elegir('');
 }
 
 // ─────────────────────────────────────────────
 // ASIGNACIONES
 // ─────────────────────────────────────────────
 
-function crearAsignacion({ cliente_telefono, vendedor_id, motivo }) {
+function crearAsignacion({ cliente_telefono, vendedor_id, motivo, cliente_nombre, vehiculo_interes }) {
   const result = db.prepare(`
-    INSERT INTO asignaciones (cliente_telefono, vendedor_id, motivo)
-    VALUES (?, ?, ?)
-  `).run(cliente_telefono, vendedor_id, motivo);
+    INSERT INTO asignaciones (cliente_telefono, vendedor_id, motivo, cliente_nombre, vehiculo_interes)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(cliente_telefono, vendedor_id, motivo, cliente_nombre || null, vehiculo_interes || null);
   return result.lastInsertRowid;
+}
+
+function marcarAsignacionNotificada(id) {
+  db.prepare(`UPDATE asignaciones SET notificado_en = CURRENT_TIMESTAMP WHERE id = ?`).run(id);
+}
+
+// Devuelve asignaciones que todavía no se notificaron al vendedor por WhatsApp.
+// Trae también el teléfono del vendedor para poder mandarle el mensaje.
+function asignacionesPendientesDeNotificar() {
+  return db.prepare(`
+    SELECT a.id, a.cliente_telefono, a.cliente_nombre, a.vehiculo_interes, a.motivo,
+           v.id as vendedor_id, v.nombre as vendedor_nombre, v.telefono as vendedor_telefono,
+           v.activo as vendedor_activo, v.disponible as vendedor_disponible
+    FROM asignaciones a
+    JOIN vendedores v ON v.id = a.vendedor_id
+    WHERE a.notificado_en IS NULL
+    ORDER BY a.creado_en ASC
+  `).all();
 }
 
 function obtenerAsignacionesPendientes() {
@@ -389,6 +406,8 @@ module.exports = {
   obtenerVendedores,
   obtenerVendedorConMenosAsignaciones,
   crearAsignacion,
+  marcarAsignacionNotificada,
+  asignacionesPendientesDeNotificar,
   obtenerAsignacionesPendientes,
   actualizarAsignacion,
   marcarSeguimientoEnviado,
