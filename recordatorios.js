@@ -56,7 +56,7 @@ async function enviarRecordatorio(cliente, texto) {
     await axios.post(
       `https://graph.facebook.com/v19.0/${config.WHATSAPP_PHONE_ID}/messages`,
       { messaging_product: 'whatsapp', to: cliente.telefono, type: 'text', text: { body: texto } },
-      { headers: { Authorization: `Bearer ${config.META_ACCESS_TOKEN}`, 'Content-Type': 'application/json' } }
+      { headers: { Authorization: `Bearer ${config.WA_TOKEN}`, 'Content-Type': 'application/json' } }
     );
   } else {
     throw new Error(`Canal ${cliente.canal} no soportado para recordatorios`);

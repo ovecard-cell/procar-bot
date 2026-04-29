@@ -236,11 +236,11 @@ async function recibirMensaje(req, res) {
         if (!mediaId) return;
         try {
           const meta = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, {
-            headers: { Authorization: `Bearer ${config.META_ACCESS_TOKEN}` },
+            headers: { Authorization: `Bearer ${config.WA_TOKEN}` },
           });
           const { tipo, ext } = tipoDesdeAttachment(mensaje.type, meta.data.mime_type);
           const archivo = await descargarMedia(meta.data.url, ext, {
-            Authorization: `Bearer ${config.META_ACCESS_TOKEN}`,
+            Authorization: `Bearer ${config.WA_TOKEN}`,
           });
           if (!archivo) return;
           console.log(`[WhatsApp] ${tipo} de ${telefono}: ${archivo}`);
@@ -325,7 +325,7 @@ async function enviarWhatsApp(phoneId, destinatario, texto) {
       },
       {
         headers: {
-          Authorization: `Bearer ${config.META_ACCESS_TOKEN}`,
+          Authorization: `Bearer ${config.WA_TOKEN}`,
           'Content-Type': 'application/json'
         }
       }

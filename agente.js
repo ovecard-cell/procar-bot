@@ -1,4 +1,6 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const fs = require('fs');
+const path = require('path');
 const config = require('./config');
 const {
   guardarLead,
@@ -7,8 +9,79 @@ const {
   obtenerVendedorConMenosAsignaciones,
   crearAsignacion,
   getSetting,
+  MEDIA_DIR,
 } = require('./database');
 const { enviarWhatsAppVendedor } = require('./mensajero');
+
+// ─────────────────────────────────────────────
+// VISION: convertir mensajes con archivo en bloques que Claude pueda procesar
+// ─────────────────────────────────────────────
+
+const MEDIA_TYPE_POR_EXT = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+};
+
+// Lee la imagen del disco y la convierte en un bloque de imagen para Claude.
+// Si falla (archivo borrado, formato no soportado, demasiado grande), devuelve
+// un texto placeholder así no rompemos la conversación.
+function bloqueDesdeImagen(archivo) {
+  try {
+    const ruta = path.join(MEDIA_DIR, archivo);
+    if (!fs.existsSync(ruta)) return null;
+    const ext = path.extname(archivo).toLowerCase();
+    const mediaType = MEDIA_TYPE_POR_EXT[ext];
+    if (!mediaType) return null;
+    const stat = fs.statSync(ruta);
+    // Claude tiene límite de ~5 MB por imagen. Si es más, dejamos placeholder.
+    if (stat.size > 4 * 1024 * 1024) {
+      console.log(`[Agente] Imagen ${archivo} pesa ${stat.size}b, demasiado grande para vision`);
+      return null;
+    }
+    const b64 = fs.readFileSync(ruta).toString('base64');
+    return {
+      type: 'image',
+      source: { type: 'base64', media_type: mediaType, data: b64 },
+    };
+  } catch (err) {
+    console.error(`[Agente] Error leyendo imagen ${archivo}:`, err.message);
+    return null;
+  }
+}
+
+// Convierte una fila de la DB en un mensaje listo para mandar a Claude.
+// - Texto puro: { role, content: 'texto' }
+// - Imagen con vision OK: { role, content: [imagen, texto] }
+// - Imagen sin vision (archivo borrado o muy grande): placeholder
+// - Audio/video: placeholder (Claude no procesa esos tipos)
+function filaAMensaje(m) {
+  if (m.tipo === 'imagen' && m.archivo) {
+    const bloqueImg = bloqueDesdeImagen(m.archivo);
+    if (bloqueImg) {
+      return {
+        role: m.rol,
+        content: [
+          bloqueImg,
+          { type: 'text', text: m.contenido && m.contenido.trim() ? m.contenido : '[foto que mandó el cliente]' },
+        ],
+      };
+    }
+    return { role: m.rol, content: '[el cliente mandó una foto que no pude ver]' };
+  }
+  if (m.tipo === 'audio') {
+    return { role: m.rol, content: '[el cliente mandó un audio — no lo puedo escuchar]' };
+  }
+  if (m.tipo === 'video') {
+    return { role: m.rol, content: '[el cliente mandó un video — no lo puedo ver]' };
+  }
+  // Texto puro. Si por algún motivo el contenido vino vacío, ponemos un placeholder
+  // para que la API de Anthropic no rechace el mensaje.
+  const texto = m.contenido && m.contenido.trim() ? m.contenido : '[mensaje vacío]';
+  return { role: m.rol, content: texto };
+}
 
 const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 
@@ -312,11 +385,23 @@ REGLAS IMPORTANTES:
 - Respondé siempre en español rioplatense / correntino, natural.
 
 CUANDO EL CLIENTE MANDA UNA FOTO / AUDIO / VIDEO:
-En el historial vas a ver mensajes que dicen "[el cliente envió una foto]", "[el cliente envió un audio]", etc. Vos NO podés ver ni escuchar el contenido — solo sabés que el cliente mandó algo. Comportate así:
-- Si era una foto del usado para permuta (porque vos se la pediste): agradecé y decí que el vendedor las revisa. Ej: "Bárbaro, las recibí. El vendedor las mira y te tira un valor."
-- Si era una foto de un auto que vio en Marketplace: aclarale que vos no las podés ver y pedile que te diga qué auto era. Ej: "Por acá no me llegan las imágenes nítidas — ¿me decís qué auto es por nombre? Marca y modelo si tenés."
-- Si era un audio: pedile amable que te lo escriba, porque por el chat te llegan mejor los datos por texto. Ej: "Disculpá, los audios no los puedo escuchar bien. ¿Me lo podés tipear cortito?"
-- Nunca hagas como que viste/escuchaste algo que no.
+
+📷 FOTOS — VOS SÍ LAS VES:
+Las imágenes te llegan directo en el mensaje. Mirala, identificá qué hay (un auto, parte del auto, una foto pantallazo de Marketplace, una foto del DNI, etc.) y respondé en consecuencia con naturalidad.
+
+- Si es **una foto de un auto USADO que el cliente quiere entregar en permuta**: comentá lo que ves de forma genuina (color, modelo si lo identificás, estado general que se aprecia), agradecé y decí que el vendedor lo revisa para tirarle un valor. Ej: "Bárbaro, vi el Gol gris. Se ve cuidado. Lo paso al vendedor para que te tire un valor de toma."
+- Si es **un pantallazo de una publicación de Marketplace** (con fotos de auto, precio, descripción): leé el modelo, año, precio si están visibles, y reaccioná en consecuencia. Ej: "Sí, el Corolla 2020 que viste en Marketplace. Te paso al vendedor para que te confirme disponibilidad y precio actual."
+- Si es **una foto del DNI o CUIL**: agradecele, guardá el dato si podés leerlo (con guardar_lead), y avisale que el vendedor le arma la financiación.
+- Si es **algo que no tiene que ver con un auto** (selfie, captura de WhatsApp, foto de comida): pedí amablemente la info que necesitás. Ej: "Te recibí la foto pero no la veo relacionada con el auto. ¿Me podés contar qué necesitás?"
+
+⚠️ Aunque la veas, NO confirmes precios, kilómetros, ni disponibilidad de ningún auto que aparezca en una imagen. El vendedor confirma esos datos.
+
+🎤 AUDIOS Y 🎬 VIDEOS — NO LOS PODÉS ESCUCHAR/VER:
+Vas a ver "[el cliente mandó un audio — no lo puedo escuchar]" o similar. Pedile amable que te lo escriba.
+- Audio: "Disculpá, no puedo escuchar audios por acá. ¿Me lo podés tipear cortito?"
+- Video: "El video no me llega del todo bien. ¿Me podés contar en texto qué me querés mostrar?"
+
+Nunca hagas como que escuchaste/viste algo que no.
 
 CIERRE DESPUÉS DE ESCALAR:
 Cuando ya escalaste al vendedor, el mensaje de cierre tiene que ser corto y simple — solo decile que ya le va a escribir el vendedor. NUNCA agregues el WhatsApp de la agencia.
@@ -387,10 +472,7 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
   }
 
   const historial = obtenerHistorial(telefono);
-  const mensajes = historial.map(m => ({
-    role: m.rol,
-    content: m.contenido
-  }));
+  const mensajes = historial.map(filaAMensaje);
 
   let respuesta = await client.messages.create({
     model: 'claude-sonnet-4-6',
@@ -447,10 +529,7 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
 
 async function generarRespuestaRescate(telefono, vendedorNombre) {
   const historial = obtenerHistorial(telefono);
-  const mensajes = historial.map(m => ({
-    role: m.rol,
-    content: m.contenido
-  }));
+  const mensajes = historial.map(filaAMensaje);
 
   const promptRescate = `\n\nSITUACIÓN ACTUAL: El vendedor asignado (${vendedorNombre || 'el vendedor'}) hace más de 30 minutos que no responde al cliente. Vos retomás la conversación temporalmente.
 

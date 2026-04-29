@@ -208,20 +208,14 @@ function guardarMensaje({ telefono, rol, contenido, canal, tipo, archivo }) {
 }
 
 function obtenerHistorial(telefono) {
-  // Para el LLM solo nos sirve el texto. Las imágenes/audios las marcamos
-  // con un placeholder textual para que Gonzalo sepa que el cliente le mandó algo.
+  // Devolvemos las filas crudas. El agente decide qué hacer con cada tipo
+  // (las imágenes las pasa a Claude como bloques de imagen para vision).
   const rows = db.prepare(
-    `SELECT rol, contenido, tipo FROM conversaciones
+    `SELECT rol, contenido, tipo, archivo FROM conversaciones
      WHERE telefono = ?
      ORDER BY creado_en DESC LIMIT 20`
   ).all(telefono);
-  return rows.reverse().map(m => ({
-    rol: m.rol,
-    contenido: m.tipo === 'imagen' ? '[el cliente envió una foto]'
-             : m.tipo === 'audio'  ? '[el cliente envió un audio]'
-             : m.tipo === 'video'  ? '[el cliente envió un video]'
-             : m.contenido,
-  }));
+  return rows.reverse();
 }
 
 // ─────────────────────────────────────────────

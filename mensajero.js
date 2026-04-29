@@ -19,7 +19,7 @@ async function enviarWhatsAppVendedor(telefono, texto) {
     },
     {
       headers: {
-        Authorization: `Bearer ${config.META_ACCESS_TOKEN}`,
+        Authorization: `Bearer ${config.WA_TOKEN}`,
         'Content-Type': 'application/json'
       }
     }

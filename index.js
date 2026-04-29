@@ -490,10 +490,12 @@ app.get('/api/wa-info', async (req, res) => {
     if (!config.WHATSAPP_PHONE_ID) {
       return res.json({ error: 'WHATSAPP_PHONE_ID no está configurado en Railway' });
     }
+    // Usamos el WA_TOKEN (WHATSAPP_TOKEN si está, sino META_ACCESS_TOKEN).
+    // Para consultar info del número hace falta scope whatsapp_business_management.
     const r = await axios.get(`https://graph.facebook.com/v19.0/${config.WHATSAPP_PHONE_ID}`, {
       params: {
         fields: 'display_phone_number,verified_name,quality_rating,name_status',
-        access_token: config.META_ACCESS_TOKEN,
+        access_token: config.WA_TOKEN,
       },
     });
     res.json({
@@ -503,9 +505,13 @@ app.get('/api/wa-info', async (req, res) => {
       calidad: r.data.quality_rating,
       estado: r.data.name_status,
       phone_id: config.WHATSAPP_PHONE_ID,
+      usando_token: config.WHATSAPP_TOKEN ? 'WHATSAPP_TOKEN' : 'META_ACCESS_TOKEN (fallback — puede no tener permisos de WA)',
     });
   } catch (err) {
-    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+    res.status(500).json({
+      error: err.response?.data?.error?.message || err.message,
+      hint: 'Si dice "Application does not have permission", generá un System User Token en Meta Business Manager con scopes whatsapp_business_management y whatsapp_business_messaging, y pegalo en Railway como WHATSAPP_TOKEN.',
+    });
   }
 });
 
