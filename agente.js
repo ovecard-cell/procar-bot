@@ -11,7 +11,7 @@ const {
   getSetting,
   MEDIA_DIR,
 } = require('./database');
-const { enviarWhatsAppVendedor } = require('./mensajero');
+const { enviarWhatsAppVendedor, enviarLeadAsignado } = require('./mensajero');
 
 // ─────────────────────────────────────────────
 // VISION: convertir mensajes con archivo en bloques que Claude pueda procesar
@@ -122,24 +122,32 @@ const herramientas = [
   },
   {
     name: 'escalar_a_vendedor',
-    description: 'Asigna el cliente a un vendedor real (Antonio, Facu, Cristhian o Gustavo) y le avisa por WhatsApp. Usar cuando el cliente quiere cotizar su auto, ver financiación, hacer prueba de manejo, ver el auto en persona, o negociar precio. También usar si el cliente pide hablar con un vendedor específico por nombre.',
+    description: 'Asigna el cliente a un vendedor real (Antonio, Facu, Cristhian o Gustavo) y le avisa por WhatsApp con una plantilla. Usar cuando el cliente quiere cotizar su auto, ver financiación, hacer prueba de manejo, ver el auto en persona, o negociar precio. También usar si el cliente pide hablar con un vendedor específico por nombre.',
     input_schema: {
       type: 'object',
       properties: {
         motivo: {
           type: 'string',
-          description: 'Por qué necesita atención de un vendedor. Ej: quiere cotizar su auto, ver financiación, prueba de manejo.'
+          description: 'Por qué necesita atención de un vendedor. Una frase clara y corta. Ej: "quiere cotizar su Gol 2018 para permuta", "pide cuotas concretas para el Corolla".'
         },
         resumen_cliente: {
           type: 'string',
           description: 'Resumen de lo que hablaste con el cliente: qué busca, presupuesto, nombre si lo dio.'
+        },
+        nombre_cliente: {
+          type: 'string',
+          description: 'Nombre del cliente si te lo dijo durante la conversación. Si no te lo dijo, dejá vacío y el sistema usa "Cliente" + últimos dígitos del teléfono.'
+        },
+        vehiculo_interes: {
+          type: 'string',
+          description: 'Auto que le interesa al cliente, lo más específico posible. Ej: "Toyota Corolla 2020", "Volkswagen Gol Trend", "VW Fox 2012". Si el cliente no mencionó un auto puntual, poné "consulta general".'
         },
         vendedor_preferido: {
           type: 'string',
           description: 'Si el cliente pidió un vendedor específico por nombre (Antonio, Facu, Cristhian, Gustavo), pasalo acá. Si no, dejalo vacío y el sistema asigna automáticamente.'
         }
       },
-      required: ['motivo', 'resumen_cliente']
+      required: ['motivo', 'resumen_cliente', 'vehiculo_interes']
     }
   }
 ];
@@ -195,18 +203,28 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
     setSetting(`bot_pausado_${telefono}`, 'true');
     console.log(`[Agente] Bot pausado para ${telefono} - vendedor ${vendedor.nombre} toma el chat`);
 
-    // Enviar WhatsApp al vendedor
-    const mensajeVendedor = `🚗 *Nuevo cliente asignado*\n\n` +
-      `📋 *Motivo:* ${input.motivo}\n` +
-      `📝 *Resumen:* ${input.resumen_cliente}\n` +
-      `📱 *Cliente:* ${telefono}\n` +
-      `📍 *Canal:* ${canal}\n\n` +
-      `Contactalo lo antes posible. En 30-40 min te pregunto cómo te fue.`;
+    // Resolver el nombre del cliente: 1) lo que pasó el LLM, 2) la tabla clientes,
+    // 3) fallback con últimos dígitos del teléfono
+    let nombreCliente = (input.nombre_cliente || '').trim();
+    if (!nombreCliente) {
+      const { db } = require('./database');
+      const clienteDB = db.prepare('SELECT nombre FROM clientes WHERE telefono = ?').get(telefono);
+      nombreCliente = clienteDB?.nombre || `Cliente ${String(telefono).slice(-4)}`;
+    }
+    const vehiculoInteres = (input.vehiculo_interes || '').trim() || 'consulta general';
+    const motivoCorto = (input.motivo || input.resumen_cliente || 'sin detalle').trim();
 
+    // Enviar WhatsApp al vendedor usando la plantilla aprobada por Meta.
+    // Si la plantilla todavía no está aprobada o falla, lo log pero no rompemos
+    // el escalado — el lead ya quedó guardado y visible en el dashboard.
     try {
-      await enviarWhatsAppVendedor(vendedor.telefono, mensajeVendedor);
+      await enviarLeadAsignado(vendedor.telefono, {
+        cliente: nombreCliente,
+        vehiculo: vehiculoInteres,
+        consulta: motivoCorto,
+      });
     } catch (err) {
-      console.error(`[Escalado] Error enviando WhatsApp a ${vendedor.nombre}:`, err.message);
+      console.error(`[Escalado] Error enviando plantilla a ${vendedor.nombre}:`, err.response?.data?.error?.message || err.message);
     }
 
     return `Cliente asignado a ${vendedor.nombre}. Se le envió un WhatsApp con los datos del cliente.`;
