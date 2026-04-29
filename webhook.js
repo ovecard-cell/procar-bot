@@ -1,8 +1,53 @@
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 const { procesarMensaje } = require('./agente');
-const { getSetting } = require('./database');
+const { getSetting, MEDIA_DIR, guardarMensaje } = require('./database');
 const { limpiarRecordatorios } = require('./recordatorios');
 const config = require('./config');
+
+// ─────────────────────────────────────────────
+// DESCARGA DE MEDIA (imágenes, audios, videos)
+// ─────────────────────────────────────────────
+
+const TIPO_POR_MIME = {
+  'image/jpeg': { tipo: 'imagen', ext: 'jpg' },
+  'image/jpg':  { tipo: 'imagen', ext: 'jpg' },
+  'image/png':  { tipo: 'imagen', ext: 'png' },
+  'image/webp': { tipo: 'imagen', ext: 'webp' },
+  'image/gif':  { tipo: 'imagen', ext: 'gif' },
+  'audio/mpeg': { tipo: 'audio',  ext: 'mp3' },
+  'audio/mp4':  { tipo: 'audio',  ext: 'm4a' },
+  'audio/aac':  { tipo: 'audio',  ext: 'aac' },
+  'audio/ogg':  { tipo: 'audio',  ext: 'ogg' },
+  'audio/webm': { tipo: 'audio',  ext: 'webm' },
+  'video/mp4':  { tipo: 'video',  ext: 'mp4' },
+  'video/3gpp': { tipo: 'video',  ext: '3gp' },
+};
+
+function tipoDesdeAttachment(attType, mime) {
+  if (mime && TIPO_POR_MIME[mime]) return TIPO_POR_MIME[mime];
+  if (attType === 'image') return { tipo: 'imagen', ext: 'jpg' };
+  if (attType === 'audio') return { tipo: 'audio',  ext: 'mp3' };
+  if (attType === 'video') return { tipo: 'video',  ext: 'mp4' };
+  return { tipo: 'archivo', ext: 'bin' };
+}
+
+// Descarga una URL a la carpeta de media y devuelve el nombre del archivo
+async function descargarMedia(url, ext, headers = {}) {
+  try {
+    const r = await axios.get(url, { responseType: 'arraybuffer', headers, timeout: 20000 });
+    const filename = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
+    const fullPath = path.join(MEDIA_DIR, filename);
+    fs.writeFileSync(fullPath, r.data);
+    console.log(`[Media] Descargado ${filename} (${r.data.length} bytes)`);
+    return filename;
+  } catch (err) {
+    console.error('[Media] Error descargando:', err.message);
+    return null;
+  }
+}
 
 // ─────────────────────────────────────────────
 // HELPERS DE ERRORES DE META
@@ -69,6 +114,60 @@ async function validarToken() {
 }
 
 // ─────────────────────────────────────────────
+// MANEJO COMÚN DE MENSAJES DE INSTAGRAM / MESSENGER
+// (texto + attachments — descarga imágenes, audios, videos)
+// ─────────────────────────────────────────────
+
+async function manejarMensajeMeta({ canal, senderId, message, enviar }) {
+  // Caso 1: tiene attachments (imágenes / audios / videos / archivos)
+  if (Array.isArray(message.attachments) && message.attachments.length > 0) {
+    const guardados = [];
+    for (const att of message.attachments) {
+      // Stickers de IG/FB suelen venir como image — los tratamos igual.
+      // Templates / fallback (links compartidos, etc.) los ignoramos.
+      if (!['image', 'audio', 'video', 'file'].includes(att.type)) {
+        console.log(`[${canal}] Attachment tipo '${att.type}' ignorado`);
+        continue;
+      }
+      const url = att.payload?.url;
+      if (!url) {
+        console.log(`[${canal}] Attachment sin URL, salteado`);
+        continue;
+      }
+      const { tipo, ext } = tipoDesdeAttachment(att.type);
+      const archivo = await descargarMedia(url, ext);
+      if (!archivo) continue;
+      console.log(`[${canal}] ${tipo} de ${senderId}: ${archivo}`);
+      guardados.push({ tipo, archivo });
+    }
+    if (guardados.length === 0) return;
+
+    // Si vinieron varios attachments en un mismo mensaje, los guardamos todos
+    // pero solo llamamos al LLM una vez (con el último). Así Gonzalo "ve"
+    // todas las fotos en el historial y responde una sola vez.
+    for (let i = 0; i < guardados.length - 1; i++) {
+      const { tipo, archivo } = guardados[i];
+      guardarMensaje({ telefono: senderId, rol: 'user', contenido: '', canal, tipo, archivo });
+    }
+    const ultimo = guardados[guardados.length - 1];
+    const respuesta = await procesarMensaje(senderId, '', canal, ultimo);
+    if (respuesta) await enviar(senderId, respuesta);
+    return;
+  }
+
+  // Caso 2: mensaje de texto puro
+  if (typeof message.text === 'string' && message.text.trim()) {
+    const texto = message.text;
+    console.log(`[${canal}] Mensaje de ${senderId}: ${texto}`);
+    const respuesta = await procesarMensaje(senderId, texto, canal);
+    if (respuesta) await enviar(senderId, respuesta);
+    return;
+  }
+
+  console.log(`[${canal}] Mensaje sin texto ni attachments soportados, ignorado`);
+}
+
+// ─────────────────────────────────────────────
 // VERIFICACIÓN DEL WEBHOOK (Meta lo llama al configurar)
 // ─────────────────────────────────────────────
 
@@ -113,17 +212,47 @@ async function recibirMensaje(req, res) {
       const value   = changes?.value;
       const mensaje = value?.messages?.[0];
 
-      if (!mensaje || mensaje.type !== 'text') return;
+      if (!mensaje) return;
 
       const telefono = mensaje.from;
-      const texto    = mensaje.text.body;
       const phoneId  = value.metadata.phone_number_id;
 
-      console.log(`[WhatsApp] Mensaje de ${telefono}: ${texto}`);
-
       limpiarRecordatorios(telefono);
-      const respuesta = await procesarMensaje(telefono, texto, 'whatsapp');
-      if (respuesta) await enviarWhatsApp(phoneId, telefono, respuesta);
+
+      // Texto puro
+      if (mensaje.type === 'text') {
+        const texto = mensaje.text.body;
+        console.log(`[WhatsApp] Mensaje de ${telefono}: ${texto}`);
+        const respuesta = await procesarMensaje(telefono, texto, 'whatsapp');
+        if (respuesta) await enviarWhatsApp(phoneId, telefono, respuesta);
+        return;
+      }
+
+      // Media (imagen, audio, video, documento). WhatsApp manda solo un media_id;
+      // hay que pedirle a Meta la URL, descargarla con el token y guardarla.
+      if (['image', 'audio', 'video', 'document'].includes(mensaje.type)) {
+        const mediaInfo = mensaje[mensaje.type];
+        const mediaId = mediaInfo?.id;
+        if (!mediaId) return;
+        try {
+          const meta = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, {
+            headers: { Authorization: `Bearer ${config.META_ACCESS_TOKEN}` },
+          });
+          const { tipo, ext } = tipoDesdeAttachment(mensaje.type, meta.data.mime_type);
+          const archivo = await descargarMedia(meta.data.url, ext, {
+            Authorization: `Bearer ${config.META_ACCESS_TOKEN}`,
+          });
+          if (!archivo) return;
+          console.log(`[WhatsApp] ${tipo} de ${telefono}: ${archivo}`);
+          const respuesta = await procesarMensaje(telefono, '', 'whatsapp', { tipo, archivo });
+          if (respuesta) await enviarWhatsApp(phoneId, telefono, respuesta);
+        } catch (err) {
+          describirErrorMeta(err, `descargar media WhatsApp ${mediaId}`);
+        }
+        return;
+      }
+
+      console.log(`[WhatsApp] Tipo de mensaje '${mensaje.type}' ignorado`);
       return;
     }
 
@@ -132,16 +261,22 @@ async function recibirMensaje(req, res) {
       const entry    = body.entry?.[0];
       const messaging = entry?.messaging?.[0];
 
-      if (!messaging?.message?.text) return;
+      if (!messaging?.message) return;
+
+      // Ignorar echoes (los mensajes que el bot envió y Meta nos rebota como evento)
+      if (messaging.message.is_echo) {
+        console.log('[Instagram] Echo ignorado (mensaje del propio bot)');
+        return;
+      }
 
       const senderId = messaging.sender.id;
-      const texto    = messaging.message.text;
-
-      console.log(`[Instagram] Mensaje de ${senderId}: ${texto}`);
-
       limpiarRecordatorios(senderId);
-      const respuesta = await procesarMensaje(senderId, texto, 'instagram');
-      if (respuesta) await enviarInstagram(senderId, respuesta);
+      await manejarMensajeMeta({
+        canal: 'instagram',
+        senderId,
+        message: messaging.message,
+        enviar: enviarInstagram,
+      });
       return;
     }
 
@@ -150,16 +285,22 @@ async function recibirMensaje(req, res) {
       const entry    = body.entry?.[0];
       const messaging = entry?.messaging?.[0];
 
-      if (!messaging?.message?.text) return;
+      if (!messaging?.message) return;
+
+      // Ignorar echoes (los mensajes que el bot envió y Meta nos rebota como evento)
+      if (messaging.message.is_echo) {
+        console.log('[Messenger] Echo ignorado (mensaje del propio bot)');
+        return;
+      }
 
       const senderId = messaging.sender.id;
-      const texto    = messaging.message.text;
-
-      console.log(`[Messenger] Mensaje de ${senderId}: ${texto}`);
-
       limpiarRecordatorios(senderId);
-      const respuesta = await procesarMensaje(senderId, texto, 'messenger');
-      if (respuesta) await enviarMessenger(senderId, respuesta);
+      await manejarMensajeMeta({
+        canal: 'messenger',
+        senderId,
+        message: messaging.message,
+        enviar: enviarMessenger,
+      });
       return;
     }
 

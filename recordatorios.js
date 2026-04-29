@@ -160,6 +160,7 @@ async function rescatarConversacionesColgadas() {
   `).all();
 
   let rescatados = 0;
+  const { generarRespuestaRescate } = require('./agente');
   for (const c of candidatos) {
     const minSinRespuesta = (ahora - new Date(c.ultimo_msg_cliente).getTime()) / (60 * 1000);
     // 30 min sin que el vendedor responda en el dashboard
@@ -169,12 +170,25 @@ async function rescatarConversacionesColgadas() {
     const { setSetting } = require('./database');
     setSetting(`bot_pausado_${c.telefono}`, 'false');
 
-    const texto = `Disculpá la demora, ${c.vendedor_nombre || 'el vendedor'} está terminando con otro cliente. ¿Querés que te vaya pasando algo más mientras tanto, o esperás que te escriba en un rato?`;
+    let texto;
+    try {
+      // Generamos la respuesta con el LLM, así Gonzalo lee el historial,
+      // sabe la hora actual, y puede contestar la pregunta pendiente del cliente
+      // y avisar el horario real del vendedor.
+      texto = await generarRespuestaRescate(c.telefono, c.vendedor_nombre);
+      if (!texto || !texto.trim()) {
+        // Fallback si el LLM no devolvió nada
+        texto = `Disculpá la demora, ${c.vendedor_nombre || 'el vendedor'} está con otro cliente. Te escribe en cuanto pueda.`;
+      }
+    } catch (err) {
+      console.error(`[Rescate] Error generando respuesta LLM para ${c.telefono}:`, err.message);
+      texto = `Disculpá la demora, ${c.vendedor_nombre || 'el vendedor'} está con otro cliente. Te escribe en cuanto pueda.`;
+    }
 
     try {
       await enviarRecordatorio(c, texto);
       db.prepare('INSERT INTO conversaciones (telefono, rol, contenido, canal) VALUES (?, ?, ?, ?)')
-        .run(c.telefono, 'assistant', `[bot rescate] ${texto}`, c.canal);
+        .run(c.telefono, 'assistant', texto, c.canal);
       console.log(`[Rescate] Bot retomó conversación de ${c.telefono} (vendedor ${c.vendedor_nombre} colgado ${minSinRespuesta.toFixed(0)} min)`);
       rescatados++;
     } catch (err) {

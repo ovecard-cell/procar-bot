@@ -49,6 +49,9 @@
   .msg.assistant { background: #C9A84C; color: #1a1a2e; align-self: flex-end; border-bottom-right-radius: 4px; font-weight: 500; }
   .msg .meta { font-size: 0.7rem; color: rgba(255,255,255,0.6); margin-top: 4px; }
   .msg.assistant .meta { color: rgba(0,0,0,0.5); }
+  .msg img.media { max-width: 280px; max-height: 320px; border-radius: 8px; display: block; cursor: pointer; }
+  .msg img.media:hover { opacity: 0.92; }
+  .msg audio.media, .msg video.media { max-width: 280px; display: block; }
 
   .selecciona { display: flex; align-items: center; justify-content: center; height: 100%; color: #666; flex: 1; }
   .evento-escalado { align-self: center; background: #C9A84C; color: #1a1a2e; padding: 8px 14px; border-radius: 16px; font-size: 0.82rem; font-weight: 700; margin: 8px 0; }
@@ -365,7 +368,18 @@
       if (e.tipo === 'escalado') {
         return `<div class="evento-escalado">📤 Pasado a ${escapar(e.vendedor)} · ${formatearFecha(e.creado_en)}${e.motivo ? `<div style="font-weight:400;font-size:0.75rem;margin-top:4px;color:#1a1a2e">${escapar(e.motivo)}</div>` : ''}</div>`;
       }
-      return `<div class="msg ${e.rol}">${escapar(e.contenido)}<div class="meta">${formatearFecha(e.creado_en)}</div></div>`;
+      // tipo de media: 'imagen', 'audio', 'video' — sino texto plano
+      let cuerpo = '';
+      if (e.archivo && e.tipo === 'imagen') {
+        cuerpo = `<a href="/media/${escapar(e.archivo)}" target="_blank"><img class="media" src="/media/${escapar(e.archivo)}" alt="foto del cliente" /></a>`;
+      } else if (e.archivo && e.tipo === 'audio') {
+        cuerpo = `<audio class="media" controls src="/media/${escapar(e.archivo)}"></audio>`;
+      } else if (e.archivo && e.tipo === 'video') {
+        cuerpo = `<video class="media" controls src="/media/${escapar(e.archivo)}"></video>`;
+      } else {
+        cuerpo = escapar(e.contenido);
+      }
+      return `<div class="msg ${e.rol}">${cuerpo}<div class="meta">${formatearFecha(e.creado_en)}</div></div>`;
     }).join('');
     cont.scrollTop = cont.scrollHeight;
   }
@@ -382,9 +396,14 @@
     const d = new Date(iso);
     const ahora = new Date();
     const diff = (ahora - d) / 1000 / 60;
-    if (diff < 1) return 'ahora';
-    if (diff < 60) return `hace ${Math.floor(diff)} min`;
-    if (diff < 1440) return `hace ${Math.floor(diff / 60)} h`;
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const horaExacta = `${hh}:${mm}`;
+
+    // Mostrar siempre la hora exacta + cuánto hace, para saber con precisión cuándo pasó cada cosa
+    if (diff < 1) return `${horaExacta} (ahora)`;
+    if (diff < 60) return `${horaExacta} · hace ${Math.floor(diff)} min`;
+    if (diff < 1440) return `${horaExacta} · hace ${Math.floor(diff / 60)} h`;
     return d.toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
 

@@ -12,7 +12,7 @@ console.log('[DEBUG] INSTAGRAM_ACCESS_TOKEN:', process.env.INSTAGRAM_ACCESS_TOKE
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
-const { inicializarDB, cargarAutosEjemplo, cargarVendedoresEjemplo, getSetting, setSetting, autenticarVendedor, cambiarPassword } = require('./database');
+const { inicializarDB, cargarAutosEjemplo, cargarVendedoresEjemplo, getSetting, setSetting, autenticarVendedor, cambiarPassword, MEDIA_DIR } = require('./database');
 
 const COOKIE_SECRET = process.env.COOKIE_SECRET || 'procar-secret-' + (process.env.ANTHROPIC_API_KEY || 'default').slice(0, 16);
 
@@ -64,6 +64,9 @@ app.use(express.json());
 // Inicializar base de datos y vendedores (sin autos de ejemplo — Gonzalo escala todo)
 inicializarDB();
 cargarVendedoresEjemplo();
+
+// Servir archivos de media (imágenes, audios, videos enviados por clientes)
+app.use('/media', express.static(MEDIA_DIR, { maxAge: '7d' }));
 
 // Health check
 app.get('/', (req, res) => {
@@ -291,7 +294,13 @@ app.get('/api/conversaciones', (req, res) => {
   let query = `
     SELECT c.telefono, c.canal, MAX(c.creado_en) as ultimo,
            cl.nombre,
-           (SELECT contenido FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as preview,
+           (SELECT CASE
+              WHEN tipo = 'imagen' THEN '📷 [foto]'
+              WHEN tipo = 'audio'  THEN '🎤 [audio]'
+              WHEN tipo = 'video'  THEN '🎬 [video]'
+              ELSE contenido
+            END
+            FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as preview,
            (SELECT v.nombre FROM asignaciones a JOIN vendedores v ON v.id = a.vendedor_id
             WHERE a.cliente_telefono = c.telefono ORDER BY a.creado_en DESC LIMIT 1) as vendedor_asignado
     FROM conversaciones c
@@ -376,7 +385,7 @@ app.get('/api/conversacion/:telefono', (req, res) => {
   const { db } = require('./database');
   const cliente = db.prepare('SELECT nombre, cuil, presupuesto, interes FROM clientes WHERE telefono = ?').get(req.params.telefono);
   const mensajes = db.prepare(`
-    SELECT rol, contenido, creado_en
+    SELECT rol, contenido, tipo, archivo, creado_en
     FROM conversaciones
     WHERE telefono = ?
     ORDER BY creado_en ASC

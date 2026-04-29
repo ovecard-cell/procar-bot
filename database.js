@@ -1,9 +1,36 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-const DB_PATH = path.join(__dirname, 'procar.db');
+// La DB tiene que vivir en un volumen persistente cuando estamos en Railway,
+// sino cada deploy borra todo. Prioridad:
+//   1. DB_PATH explícito (ej. /data/procar.db si montaste un volumen)
+//   2. RAILWAY_VOLUME_MOUNT_PATH (Railway lo expone solo si configuraste un volumen)
+//   3. fallback: archivo local en el repo (modo desarrollo)
+function resolverDBPath() {
+  if (process.env.DB_PATH) return process.env.DB_PATH;
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH) {
+    return path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'procar.db');
+  }
+  return path.join(__dirname, 'procar.db');
+}
+
+const DB_PATH = resolverDBPath();
+const dirDestino = path.dirname(DB_PATH);
+if (!fs.existsSync(dirDestino)) {
+  fs.mkdirSync(dirDestino, { recursive: true });
+  console.log(`Creada carpeta para la DB: ${dirDestino}`);
+}
+
+// Carpeta de media: convive con la DB en el mismo volumen persistente
+const MEDIA_DIR = path.join(dirDestino, 'media');
+if (!fs.existsSync(MEDIA_DIR)) {
+  fs.mkdirSync(MEDIA_DIR, { recursive: true });
+  console.log(`Creada carpeta para media: ${MEDIA_DIR}`);
+}
+
 const db = new Database(DB_PATH);
-console.log('Base de datos conectada: procar.db');
+console.log(`Base de datos conectada: ${DB_PATH}`);
 
 // Crear todas las tablas si no existen
 function inicializarDB() {
@@ -51,10 +78,16 @@ function inicializarDB() {
       telefono TEXT NOT NULL,
       rol TEXT NOT NULL,
       contenido TEXT NOT NULL,
+      tipo TEXT DEFAULT 'texto',
+      archivo TEXT,
       canal TEXT DEFAULT 'whatsapp',
       creado_en DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Migración: agregar tipo y archivo si la tabla ya existía
+  try { db.exec("ALTER TABLE conversaciones ADD COLUMN tipo TEXT DEFAULT 'texto'"); } catch (e) { /* ya existe */ }
+  try { db.exec("ALTER TABLE conversaciones ADD COLUMN archivo TEXT"); } catch (e) { /* ya existe */ }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS vendedores (
@@ -168,19 +201,27 @@ function guardarLead({ telefono, nombre, cuil, presupuesto, interes, canal }) {
 // CONVERSACIONES
 // ─────────────────────────────────────────────
 
-function guardarMensaje({ telefono, rol, contenido, canal }) {
+function guardarMensaje({ telefono, rol, contenido, canal, tipo, archivo }) {
   db.prepare(
-    'INSERT INTO conversaciones (telefono, rol, contenido, canal) VALUES (?, ?, ?, ?)'
-  ).run(telefono, rol, contenido, canal || 'whatsapp');
+    'INSERT INTO conversaciones (telefono, rol, contenido, tipo, archivo, canal) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(telefono, rol, contenido, tipo || 'texto', archivo || null, canal || 'whatsapp');
 }
 
 function obtenerHistorial(telefono) {
+  // Para el LLM solo nos sirve el texto. Las imágenes/audios las marcamos
+  // con un placeholder textual para que Gonzalo sepa que el cliente le mandó algo.
   const rows = db.prepare(
-    `SELECT rol, contenido FROM conversaciones
+    `SELECT rol, contenido, tipo FROM conversaciones
      WHERE telefono = ?
      ORDER BY creado_en DESC LIMIT 20`
   ).all(telefono);
-  return rows.reverse();
+  return rows.reverse().map(m => ({
+    rol: m.rol,
+    contenido: m.tipo === 'imagen' ? '[el cliente envió una foto]'
+             : m.tipo === 'audio'  ? '[el cliente envió un audio]'
+             : m.tipo === 'video'  ? '[el cliente envió un video]'
+             : m.contenido,
+  }));
 }
 
 // ─────────────────────────────────────────────
@@ -343,6 +384,7 @@ function cambiarPassword(nombre, nuevaPass) {
 
 module.exports = {
   db,
+  MEDIA_DIR,
   inicializarDB,
   cargarAutosEjemplo,
   cargarVendedoresEjemplo,
