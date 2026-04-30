@@ -128,6 +128,11 @@ function inicializarDB() {
   try { db.exec('ALTER TABLE asignaciones ADD COLUMN cliente_nombre TEXT'); } catch (e) { /* ya existe */ }
   try { db.exec('ALTER TABLE asignaciones ADD COLUMN vehiculo_interes TEXT'); } catch (e) { /* ya existe */ }
   try { db.exec('ALTER TABLE asignaciones ADD COLUMN notificado_en DATETIME'); } catch (e) { /* ya existe */ }
+  // Migración: embudo de etapas. nuevo → en_conversacion → cotizado → visita_acordada → vendido | perdido
+  try { db.exec("ALTER TABLE asignaciones ADD COLUMN etapa TEXT DEFAULT 'nuevo'"); } catch (e) { /* ya existe */ }
+  try { db.exec('ALTER TABLE asignaciones ADD COLUMN motivo_perdido TEXT'); } catch (e) { /* ya existe */ }
+  // Backfill: cualquier asignacion vieja sin etapa la dejamos como 'nuevo'
+  try { db.exec("UPDATE asignaciones SET etapa = 'nuevo' WHERE etapa IS NULL OR etapa = ''"); } catch (e) { /* ignore */ }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -322,6 +327,87 @@ function marcarSeguimientoEnviado(id) {
 }
 
 // ─────────────────────────────────────────────
+// EMBUDO DE ETAPAS
+// Etapas validas: nuevo → en_conversacion → cotizado → visita_acordada → vendido | perdido
+// ─────────────────────────────────────────────
+
+const ETAPAS_VALIDAS = ['nuevo', 'en_conversacion', 'cotizado', 'visita_acordada', 'vendido', 'perdido'];
+const ETAPAS_CERRADAS = ['vendido', 'perdido'];
+
+function actualizarEtapaAsignacion(id, etapa, motivoPerdido) {
+  if (!ETAPAS_VALIDAS.includes(etapa)) {
+    throw new Error(`Etapa invalida: ${etapa}. Validas: ${ETAPAS_VALIDAS.join(', ')}`);
+  }
+  // Si pasa a 'perdido' guardamos el motivo. Si pasa a otra etapa, lo limpiamos.
+  // Tambien sincronizamos 'estado' para mantener compatibilidad con codigo viejo.
+  const estadoLegacy = ETAPAS_CERRADAS.includes(etapa) ? 'cerrado' : 'pendiente';
+  const motivo = etapa === 'perdido' ? (motivoPerdido || null) : null;
+  db.prepare(`
+    UPDATE asignaciones
+    SET etapa = ?, motivo_perdido = ?, estado = ?, actualizado_en = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(etapa, motivo, estadoLegacy, id);
+}
+
+// Mueve a 'en_conversacion' solo si todavia esta en 'nuevo'.
+// Asi no pisamos etapas mas avanzadas cuando el vendedor sigue mandando mensajes.
+function avanzarAEnConversacion(asignacionId) {
+  db.prepare(`
+    UPDATE asignaciones
+    SET etapa = 'en_conversacion', actualizado_en = CURRENT_TIMESTAMP
+    WHERE id = ? AND etapa = 'nuevo'
+  `).run(asignacionId);
+}
+
+// Busca la asignacion mas reciente del cliente — usado para mover etapa cuando
+// el vendedor escribe desde el dashboard.
+function obtenerUltimaAsignacionPorTelefono(telefono) {
+  return db.prepare(`
+    SELECT id, etapa, vendedor_id
+    FROM asignaciones
+    WHERE cliente_telefono = ?
+    ORDER BY creado_en DESC
+    LIMIT 1
+  `).get(telefono);
+}
+
+// Devuelve todas las asignaciones agrupadas por etapa, con datos del vendedor
+// y del cliente. Filtro opcional por nombre de vendedor (para /vendedor/:nombre/embudo).
+function obtenerEmbudo({ vendedor } = {}) {
+  let query = `
+    SELECT a.id, a.cliente_telefono, a.cliente_nombre, a.vehiculo_interes, a.motivo,
+           a.etapa, a.motivo_perdido, a.creado_en, a.actualizado_en,
+           v.nombre as vendedor_nombre,
+           cl.nombre as cliente_nombre_db,
+           (SELECT MAX(creado_en) FROM conversaciones WHERE telefono = a.cliente_telefono) as ultimo_mensaje
+    FROM asignaciones a
+    JOIN vendedores v ON v.id = a.vendedor_id
+    LEFT JOIN clientes cl ON cl.telefono = a.cliente_telefono
+  `;
+  const params = [];
+  if (vendedor) {
+    query += ` WHERE LOWER(v.nombre) = LOWER(?)`;
+    params.push(vendedor);
+  }
+  query += ` ORDER BY a.actualizado_en DESC`;
+  const filas = db.prepare(query).all(...params);
+  // Resolver nombre del cliente: el de la asignacion o el de la tabla clientes
+  return filas.map(f => ({
+    id: f.id,
+    cliente_telefono: f.cliente_telefono,
+    cliente_nombre: f.cliente_nombre || f.cliente_nombre_db || `Cliente ${String(f.cliente_telefono).slice(-4)}`,
+    vehiculo_interes: f.vehiculo_interes || 'consulta general',
+    motivo: f.motivo,
+    etapa: f.etapa || 'nuevo',
+    motivo_perdido: f.motivo_perdido,
+    vendedor: f.vendedor_nombre,
+    creado_en: f.creado_en,
+    actualizado_en: f.actualizado_en,
+    ultimo_mensaje: f.ultimo_mensaje,
+  }));
+}
+
+// ─────────────────────────────────────────────
 // DATOS DE EJEMPLO
 // ─────────────────────────────────────────────
 
@@ -411,6 +497,12 @@ module.exports = {
   obtenerAsignacionesPendientes,
   actualizarAsignacion,
   marcarSeguimientoEnviado,
+  actualizarEtapaAsignacion,
+  avanzarAEnConversacion,
+  obtenerUltimaAsignacionPorTelefono,
+  obtenerEmbudo,
+  ETAPAS_VALIDAS,
+  ETAPAS_CERRADAS,
   getSetting,
   setSetting,
   autenticarVendedor,

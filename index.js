@@ -12,7 +12,12 @@ console.log('[DEBUG] INSTAGRAM_ACCESS_TOKEN:', process.env.INSTAGRAM_ACCESS_TOKE
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
-const { inicializarDB, cargarAutosEjemplo, cargarVendedoresEjemplo, getSetting, setSetting, autenticarVendedor, cambiarPassword, MEDIA_DIR } = require('./database');
+const {
+  inicializarDB, cargarAutosEjemplo, cargarVendedoresEjemplo,
+  getSetting, setSetting, autenticarVendedor, cambiarPassword, MEDIA_DIR,
+  obtenerEmbudo, actualizarEtapaAsignacion, ETAPAS_VALIDAS,
+  obtenerUltimaAsignacionPorTelefono, avanzarAEnConversacion,
+} = require('./database');
 
 const COOKIE_SECRET = process.env.COOKIE_SECRET || 'procar-secret-' + (process.env.ANTHROPIC_API_KEY || 'default').slice(0, 16);
 
@@ -157,6 +162,19 @@ app.get('/privacy.html', (req, res) => {
 // Dashboard de admin (jefe ve todo)
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
+// Vista del embudo de leads (admin ve todo, vendedor solo el suyo)
+app.get('/admin/embudo', (req, res) => {
+  res.sendFile(path.join(__dirname, 'embudo.html'));
+});
+app.get('/vendedor/:nombre/embudo', (req, res) => {
+  const autenticado = getVendedorAutenticado(req);
+  const pedido = req.params.nombre;
+  if (autenticado && autenticado.toLowerCase() === pedido.toLowerCase()) {
+    return res.sendFile(path.join(__dirname, 'embudo.html'));
+  }
+  res.redirect(`/vendedor/${encodeURIComponent(pedido)}`);
 });
 
 // Dashboard por vendedor con login
@@ -320,6 +338,31 @@ app.get('/api/estado', (req, res) => {
   res.json({ activo: getSetting('agente_activo', 'true') === 'true' });
 });
 
+// ─────────────────────────────────────────────
+// EMBUDO DE LEADS — vista por etapas
+// ─────────────────────────────────────────────
+app.get('/api/embudo', (req, res) => {
+  const vendedor = req.query.vendedor;
+  const leads = obtenerEmbudo({ vendedor });
+  res.json({
+    etapas: ETAPAS_VALIDAS,
+    leads: normalizarTimestamps(leads, ['creado_en', 'actualizado_en', 'ultimo_mensaje']),
+  });
+});
+
+app.patch('/api/asignacion/:id/etapa', (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { etapa, motivo_perdido } = req.body || {};
+    if (!etapa) return res.status(400).json({ error: 'Falta etapa' });
+    actualizarEtapaAsignacion(id, etapa, motivo_perdido);
+    res.json({ ok: true, etapa });
+  } catch (err) {
+    console.error('[Etapa] Error:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.get('/api/conversaciones', (req, res) => {
   const { db } = require('./database');
   const vendedor = req.query.vendedor;
@@ -398,6 +441,10 @@ app.post('/api/conversacion/:telefono/enviar', async (req, res) => {
     // Guardar el mensaje en la DB con marca de quién lo escribió
     const contenido = vendedor ? `[${vendedor}] ${texto}` : texto;
     guardarMensaje({ telefono, rol: 'assistant', contenido, canal });
+
+    // Embudo: si la asignacion estaba en 'nuevo', avanzarla a 'en_conversacion'
+    const asig = obtenerUltimaAsignacionPorTelefono(telefono);
+    if (asig) avanzarAEnConversacion(asig.id);
 
     res.json({ ok: true, canal });
   } catch (err) {
@@ -503,6 +550,10 @@ app.post('/api/conversacion/:telefono/enviar-media', (req, res, next) => {
       ? `[${vendedor}] ${caption || `[${tipoDB}]`}`
       : (caption || `[${tipoDB}]`);
     guardarMensaje({ telefono, rol: 'assistant', contenido, canal, tipo: tipoDB, archivo: req.file.filename });
+
+    // Embudo: si la asignacion estaba en 'nuevo', avanzarla a 'en_conversacion'
+    const asig = obtenerUltimaAsignacionPorTelefono(telefono);
+    if (asig) avanzarAEnConversacion(asig.id);
 
     res.json({ ok: true, canal, archivo: req.file.filename, tipo: tipoDB });
   } catch (err) {

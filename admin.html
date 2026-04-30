@@ -116,6 +116,7 @@
 </div>
 
 <div class="nav-links">
+  <a id="linkEmbudo" href="/admin/embudo">🪜 Embudo de leads</a>
   <a href="/analizar?desde=2026-04-20" target="_blank">📊 Análisis con Claude</a>
   <a href="/distribuir?desde=2026-04-20" target="_blank">📤 Distribuir a vendedores</a>
   <a href="/demo" target="_blank">💬 Probar Gonzalo</a>
@@ -230,6 +231,9 @@
     document.getElementById('estadoAgente').style.display = 'none';
     // Mostrar el banner de disponibilidad del vendedor
     document.getElementById('bannerDispo').style.display = 'flex';
+    // Link al embudo apunta al filtrado por vendedor
+    const linkEmb = document.getElementById('linkEmbudo');
+    if (linkEmb) linkEmb.href = `/vendedor/${encodeURIComponent(VENDEDOR)}/embudo`;
   }
 
   // Carga el estado de disponibilidad del vendedor logueado y arma el banner.

@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Embudo de leads — Procar</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f0f1a; color: #e8e8f0; margin: 0; padding: 0; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; background: #1a1a2e; border-bottom: 1px solid #2a2a3e; }
+  header h1 { color: #C9A84C; margin: 0; font-size: 1.2rem; letter-spacing: 0.05em; }
+  header .links a { color: #888; text-decoration: none; margin-left: 16px; font-size: 0.85rem; }
+  header .links a:hover { color: #C9A84C; }
+
+  .stats { display: flex; gap: 12px; padding: 16px 24px; flex-wrap: wrap; background: #15152a; border-bottom: 1px solid #2a2a3e; }
+  .stat { background: #1a1a2e; border-radius: 8px; padding: 10px 16px; min-width: 120px; }
+  .stat .label { color: #888; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat .valor { color: #C9A84C; font-size: 1.4rem; font-weight: 800; margin-top: 2px; }
+
+  .board { display: flex; gap: 12px; padding: 16px; overflow-x: auto; min-height: calc(100vh - 180px); }
+  .columna { flex: 1; min-width: 240px; max-width: 320px; background: #15152a; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; }
+  .columna h2 { font-size: 0.85rem; margin: 0 0 4px 0; color: #C9A84C; text-transform: uppercase; letter-spacing: 0.05em; display: flex; justify-content: space-between; align-items: center; }
+  .columna h2 .count { background: #C9A84C; color: #1a1a2e; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 700; }
+  .columna .definicion { color: #666; font-size: 0.7rem; margin: 0 0 10px 0; line-height: 1.4; min-height: 28px; }
+  .cards { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+
+  .card { background: #1a1a2e; border-radius: 8px; padding: 10px; border-left: 3px solid #C9A84C; cursor: default; transition: background 0.15s; }
+  .card:hover { background: #232342; }
+  .card .nombre { font-weight: 700; font-size: 0.92rem; color: #e8e8f0; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card .vehiculo { color: #aaa; font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card .meta { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; color: #888; margin-top: 8px; }
+  .card .vendedor-tag { background: #2a2a3e; color: #C9A84C; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; }
+  .card .ago { font-style: italic; }
+  .card.warn { border-left-color: #f0b500; }
+  .card.danger { border-left-color: #e63946; }
+  .card .acciones { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+  .card .acciones select { flex: 1; background: #0f0f1a; color: #fff; border: 1px solid #2a2a3e; border-radius: 4px; padding: 4px 6px; font-size: 0.75rem; cursor: pointer; }
+  .card .acciones .ver { background: #2a2a3e; color: #C9A84C; border: none; padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; cursor: pointer; }
+  .card .acciones .ver:hover { background: #C9A84C; color: #1a1a2e; }
+  .card .motivo-perdido { color: #e63946; font-size: 0.72rem; margin-top: 4px; font-style: italic; }
+
+  .col-vendido .card { border-left-color: #4caf50; }
+  .col-perdido .card { border-left-color: #777; }
+
+  .empty { color: #555; font-size: 0.8rem; text-align: center; padding: 20px 0; font-style: italic; }
+
+  /* Modal de motivo perdido */
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 100; }
+  .modal.activo { display: flex; }
+  .modal-card { background: #1a1a2e; border-radius: 10px; padding: 24px; min-width: 320px; max-width: 480px; border-top: 4px solid #e63946; }
+  .modal-card h3 { color: #e63946; margin: 0 0 12px 0; font-size: 1rem; }
+  .modal-card p { color: #aaa; font-size: 0.85rem; margin: 0 0 12px 0; }
+  .modal-card label { display: block; color: #C9A84C; font-size: 0.75rem; margin-bottom: 6px; text-transform: uppercase; }
+  .modal-card select, .modal-card textarea { width: 100%; padding: 8px; background: #0f0f1a; color: #fff; border: 1px solid #2a2a3e; border-radius: 6px; font-size: 0.9rem; margin-bottom: 12px; box-sizing: border-box; font-family: inherit; }
+  .modal-card .botones { display: flex; gap: 8px; justify-content: flex-end; }
+  .modal-card button { padding: 8px 16px; border-radius: 6px; border: none; font-weight: 700; cursor: pointer; font-size: 0.85rem; }
+  .modal-card .cancel { background: #2a2a3e; color: #aaa; }
+  .modal-card .ok { background: #e63946; color: #fff; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>EMBUDO DE LEADS</h1>
+  <div class="links">
+    <span id="contexto" style="color:#aaa; font-size:0.85rem; margin-right:12px"></span>
+    <a id="linkVolver" href="/admin">← Volver al dashboard</a>
+  </div>
+</header>
+
+<div class="stats" id="stats"></div>
+
+<div class="board" id="board"></div>
+
+<div class="modal" id="modalPerdido">
+  <div class="modal-card">
+    <h3>Marcar como perdido</h3>
+    <p id="modalCliente" style="color:#fff; font-weight:600;"></p>
+    <label>Motivo</label>
+    <select id="motivoSelect">
+      <option value="precio">Precio fuera de rango</option>
+      <option value="financiacion">No calificó para financiación</option>
+      <option value="otra_agencia">Se fue a otra agencia</option>
+      <option value="no_responde">Dejó de responder</option>
+      <option value="cambio_plan">Cambió de plan / no compra ahora</option>
+      <option value="otro">Otro</option>
+    </select>
+    <label>Detalle (opcional)</label>
+    <textarea id="motivoDetalle" rows="2" placeholder="Algo que ayude a entender por qué se cayó..."></textarea>
+    <div class="botones">
+      <button class="cancel" id="btnCancelarPerdido">Cancelar</button>
+      <button class="ok" id="btnConfirmarPerdido">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Si estamos en /vendedor/X/embudo filtramos por ese vendedor
+  const matchVend = location.pathname.match(/^\/vendedor\/([^/]+)\/embudo/);
+  const VENDEDOR = matchVend ? decodeURIComponent(matchVend[1]) : null;
+
+  if (VENDEDOR) {
+    document.getElementById('contexto').textContent = `Vendedor: ${VENDEDOR}`;
+    document.getElementById('linkVolver').href = `/vendedor/${encodeURIComponent(VENDEDOR)}`;
+  } else {
+    document.getElementById('contexto').textContent = 'Vista general';
+  }
+
+  const ETAPAS = [
+    { key: 'nuevo',           label: 'Nuevo',           definicion: 'Lead recién asignado, todavía nadie habló con él.' },
+    { key: 'en_conversacion', label: 'En conversación', definicion: 'El vendedor ya escribió, charlando con el cliente.' },
+    { key: 'cotizado',        label: 'Cotizado',        definicion: 'Ya le pasaste número concreto: precio, cuotas o valor de toma.' },
+    { key: 'visita_acordada', label: 'Visita acordada', definicion: 'Cliente confirmó día y hora para venir al local.' },
+    { key: 'vendido',         label: 'Vendido',         definicion: '🎉 Compró. Cerrado positivo.' },
+    { key: 'perdido',         label: 'Perdido',         definicion: 'No avanzó. Guardamos el motivo para mejorar.' },
+  ];
+
+  const ETAPA_LABEL = Object.fromEntries(ETAPAS.map(e => [e.key, e.label]));
+
+  let pendienteCambio = null; // { id, etapa: 'perdido' } cuando abrís el modal
+
+  function tiempoRelativo(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const diffMin = (Date.now() - d.getTime()) / 60000;
+    if (diffMin < 60) return `hace ${Math.max(1, Math.floor(diffMin))} min`;
+    const diffH = diffMin / 60;
+    if (diffH < 24) return `hace ${Math.floor(diffH)} h`;
+    const diffD = diffH / 24;
+    if (diffD < 30) return `hace ${Math.floor(diffD)} d`;
+    return d.toLocaleDateString('es-AR');
+  }
+
+  function antiguedadDias(iso) {
+    if (!iso) return 0;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return 0;
+    return (Date.now() - d.getTime()) / 86400000;
+  }
+
+  function escapar(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function renderBoard(data) {
+    const board = document.getElementById('board');
+    board.innerHTML = '';
+    const porEtapa = Object.fromEntries(ETAPAS.map(e => [e.key, []]));
+    for (const lead of data.leads) {
+      if (porEtapa[lead.etapa]) porEtapa[lead.etapa].push(lead);
+      else porEtapa['nuevo'].push(lead);
+    }
+
+    for (const et of ETAPAS) {
+      const col = document.createElement('div');
+      col.className = `columna col-${et.key}`;
+      const cards = porEtapa[et.key];
+      const cerrada = (et.key === 'vendido' || et.key === 'perdido');
+      col.innerHTML = `
+        <h2>${et.label} <span class="count">${cards.length}</span></h2>
+        <p class="definicion">${et.definicion}</p>
+        <div class="cards"></div>
+      `;
+      const cardsContainer = col.querySelector('.cards');
+      if (cards.length === 0) {
+        cardsContainer.innerHTML = '<div class="empty">Sin leads</div>';
+      } else {
+        for (const lead of cards) {
+          // Para etapas activas (no cerradas), color por antigüedad desde último movimiento
+          const dias = antiguedadDias(lead.actualizado_en);
+          let claseAlerta = '';
+          if (!cerrada) {
+            if (dias > 7) claseAlerta = 'danger';
+            else if (dias > 3) claseAlerta = 'warn';
+          }
+          const card = document.createElement('div');
+          card.className = `card ${claseAlerta}`;
+          const opcionesEtapa = ETAPAS.map(e =>
+            `<option value="${e.key}" ${e.key === lead.etapa ? 'selected' : ''}>${e.label}</option>`
+          ).join('');
+          card.innerHTML = `
+            <div class="nombre">${escapar(lead.cliente_nombre)}</div>
+            <div class="vehiculo">${escapar(lead.vehiculo_interes)}</div>
+            <div class="meta">
+              <span class="vendedor-tag">${escapar(lead.vendedor)}</span>
+              <span class="ago">${tiempoRelativo(lead.actualizado_en)}</span>
+            </div>
+            ${lead.motivo_perdido ? `<div class="motivo-perdido">Motivo: ${escapar(lead.motivo_perdido)}</div>` : ''}
+            <div class="acciones">
+              <select data-id="${lead.id}" data-cliente="${escapar(lead.cliente_nombre)}">${opcionesEtapa}</select>
+              <button class="ver" data-tel="${escapar(lead.cliente_telefono)}">Ver chat</button>
+            </div>
+          `;
+          cardsContainer.appendChild(card);
+        }
+      }
+      board.appendChild(col);
+    }
+
+    // Stats arriba
+    renderStats(data.leads);
+    cablearCards();
+  }
+
+  function renderStats(leads) {
+    const stats = document.getElementById('stats');
+    const activos = leads.filter(l => l.etapa !== 'vendido' && l.etapa !== 'perdido');
+    const estancados = activos.filter(l => antiguedadDias(l.actualizado_en) > 3);
+    const vendidos = leads.filter(l => l.etapa === 'vendido').length;
+    const perdidos = leads.filter(l => l.etapa === 'perdido').length;
+    stats.innerHTML = `
+      <div class="stat"><div class="label">Activos</div><div class="valor">${activos.length}</div></div>
+      <div class="stat"><div class="label">Estancados (+3 días)</div><div class="valor" style="color:#f0b500">${estancados.length}</div></div>
+      <div class="stat"><div class="label">Vendidos</div><div class="valor" style="color:#4caf50">${vendidos}</div></div>
+      <div class="stat"><div class="label">Perdidos</div><div class="valor" style="color:#e63946">${perdidos}</div></div>
+    `;
+  }
+
+  function cablearCards() {
+    document.querySelectorAll('.card .acciones select').forEach(sel => {
+      sel.addEventListener('change', async e => {
+        const id = parseInt(sel.dataset.id, 10);
+        const nuevaEtapa = sel.value;
+        if (nuevaEtapa === 'perdido') {
+          // Abrir modal para pedir motivo
+          pendienteCambio = { id, etapa: 'perdido', cliente: sel.dataset.cliente, sel };
+          document.getElementById('modalCliente').textContent = sel.dataset.cliente;
+          document.getElementById('motivoSelect').value = 'precio';
+          document.getElementById('motivoDetalle').value = '';
+          document.getElementById('modalPerdido').classList.add('activo');
+          // Volvemos al valor anterior hasta que confirme
+          // (cargamos desde el data-original en el cancel)
+          return;
+        }
+        await cambiarEtapa(id, nuevaEtapa);
+        cargar();
+      });
+    });
+    document.querySelectorAll('.card .ver').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tel = btn.dataset.tel;
+        const ruta = VENDEDOR ? `/vendedor/${encodeURIComponent(VENDEDOR)}#${tel}` : `/admin#${tel}`;
+        window.open(ruta, '_blank');
+      });
+    });
+  }
+
+  async function cambiarEtapa(id, etapa, motivoPerdido) {
+    const body = { etapa };
+    if (motivoPerdido) body.motivo_perdido = motivoPerdido;
+    const res = await fetch(`/api/asignacion/${id}/etapa`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      alert('Error: ' + (data.error || 'no se pudo cambiar la etapa'));
+      return false;
+    }
+    return true;
+  }
+
+  document.getElementById('btnCancelarPerdido').addEventListener('click', () => {
+    document.getElementById('modalPerdido').classList.remove('activo');
+    pendienteCambio = null;
+    cargar(); // recarga para revertir el select
+  });
+
+  document.getElementById('btnConfirmarPerdido').addEventListener('click', async () => {
+    if (!pendienteCambio) return;
+    const motivo = document.getElementById('motivoSelect').value;
+    const detalle = document.getElementById('motivoDetalle').value.trim();
+    const motivoCompleto = detalle ? `${motivo} — ${detalle}` : motivo;
+    const ok = await cambiarEtapa(pendienteCambio.id, 'perdido', motivoCompleto);
+    document.getElementById('modalPerdido').classList.remove('activo');
+    pendienteCambio = null;
+    if (ok) cargar();
+  });
+
+  async function cargar() {
+    const url = VENDEDOR ? `/api/embudo?vendedor=${encodeURIComponent(VENDEDOR)}` : '/api/embudo';
+    const res = await fetch(url);
+    const data = await res.json();
+    renderBoard(data);
+  }
+
+  cargar();
+  setInterval(cargar, 15000); // refrescar cada 15s
+</script>
+
+</body>
+</html>
