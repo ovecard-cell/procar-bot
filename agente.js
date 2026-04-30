@@ -518,6 +518,29 @@ function contextoTemporal() {
   return `\n\nCONTEXTO TEMPORAL (importante para saber si estás dentro del horario de los vendedores):\nFecha y hora actual en Argentina: ${ahora}.`;
 }
 
+// Si el cliente ya tiene un vendedor asignado, le decimos a Gonzalo quién es,
+// para que cuando el cliente sigue escribiendo fuera de horario le diga
+// algo concreto del estilo "Facu ya cerró, mañana de 9 te sigue atendiendo"
+// en vez de respuestas genéricas que dejan al cliente sin saber cuándo le contestan.
+function contextoConversacion(telefono) {
+  try {
+    const { db } = require('./database');
+    const row = db.prepare(`
+      SELECT v.nombre
+      FROM asignaciones a
+      JOIN vendedores v ON v.id = a.vendedor_id
+      WHERE a.cliente_telefono = ?
+      ORDER BY a.creado_en DESC
+      LIMIT 1
+    `).get(telefono);
+    if (!row) return '';
+    return `\n\nESTADO DE LA CONVERSACIÓN: este cliente YA tiene asignado a ${row.nombre} como vendedor. Si sigue escribiendo y vos respondés (porque ${row.nombre} todavía no le escribió), tenés que decirle cuándo va a recibir respuesta de ${row.nombre} usando el horario de los vendedores. NO ofrezcas reasignar a otro, NO le digas "explicame de cero" — ya tiene quien lo atiende. Si estamos FUERA del horario (después de las 21 lun-sáb, después de las 13 los sábados, en la pausa 13:00-16:30, o domingo), decílo explícito: ej "Disculpá, ${row.nombre} ya cerró por hoy. Mañana de 9 a 13 y de 16:30 a 21 te sigue atendiendo." Si estamos DENTRO del horario, alcanza con "Aguantá un toque que ${row.nombre} te escribe" sin promesas de tiempo exactas.`;
+  } catch (err) {
+    console.error('[contextoConversacion] error:', err.message);
+    return '';
+  }
+}
+
 // ─────────────────────────────────────────────
 // PROCESAR MENSAJE
 // ─────────────────────────────────────────────
@@ -539,7 +562,7 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
   let respuesta = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 1024,
-    system: SYSTEM_PROMPT + contextoTemporal(),
+    system: SYSTEM_PROMPT + contextoTemporal() + contextoConversacion(telefono),
     tools: herramientas,
     messages: mensajes
   });
