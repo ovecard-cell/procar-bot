@@ -68,6 +68,29 @@ cargarVendedoresEjemplo();
 // Servir archivos de media (imágenes, audios, videos enviados por clientes)
 app.use('/media', express.static(MEDIA_DIR, { maxAge: '7d' }));
 
+// SQLite devuelve los timestamps como "YYYY-MM-DD HH:MM:SS" (UTC, sin marcar zona).
+// Algunos navegadores los interpretan como hora local y rompen el formateo.
+// Esta función los normaliza a ISO 8601 con Z explícita antes de mandarlos al cliente.
+function toISO(s) {
+  if (typeof s !== 'string') return s;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) {
+    return s.replace(' ', 'T') + 'Z';
+  }
+  // Si ya viene con T pero sin Z ni offset, agregamos Z
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(s)) {
+    return s + 'Z';
+  }
+  return s;
+}
+function normalizarTimestamps(obj, campos) {
+  if (!obj) return obj;
+  if (Array.isArray(obj)) return obj.map(o => normalizarTimestamps(o, campos));
+  for (const c of campos) {
+    if (c in obj) obj[c] = toISO(obj[c]);
+  }
+  return obj;
+}
+
 // Health check
 app.get('/', (req, res) => {
   res.send('Bot Procar funcionando correctamente');
@@ -281,7 +304,10 @@ app.get('/api/asignaciones', (req, res) => {
     GROUP BY v.id
     ORDER BY v.activo DESC, total DESC
   `).all();
-  res.json({ asignaciones: todas, por_vendedor: porVendedor });
+  res.json({
+    asignaciones: normalizarTimestamps(todas, ['creado_en']),
+    por_vendedor: porVendedor,
+  });
 });
 
 app.get('/api/estado', (req, res) => {
@@ -322,7 +348,7 @@ app.get('/api/conversaciones', (req, res) => {
 
   query += ` GROUP BY c.telefono ORDER BY ultimo DESC LIMIT 100`;
   const rows = db.prepare(query).all(...params);
-  res.json(rows);
+  res.json(normalizarTimestamps(rows, ['ultimo']));
 });
 
 // Vendedor escribe al cliente desde el dashboard
@@ -399,7 +425,15 @@ app.get('/api/conversacion/:telefono', (req, res) => {
     ORDER BY a.creado_en ASC
   `).all(req.params.telefono);
   const botPausado = getSetting(`bot_pausado_${req.params.telefono}`, 'false') === 'true';
-  res.json({ nombre: cliente?.nombre, cuil: cliente?.cuil, presupuesto: cliente?.presupuesto, interes: cliente?.interes, mensajes, asignaciones, bot_pausado: botPausado });
+  res.json({
+    nombre: cliente?.nombre,
+    cuil: cliente?.cuil,
+    presupuesto: cliente?.presupuesto,
+    interes: cliente?.interes,
+    mensajes: normalizarTimestamps(mensajes, ['creado_en']),
+    asignaciones: normalizarTimestamps(asignaciones, ['creado_en']),
+    bot_pausado: botPausado,
+  });
 });
 
 app.post('/chat', async (req, res) => {
