@@ -55,6 +55,14 @@
   .conversacion .canal { font-size: 0.7rem; padding: 2px 8px; border-radius: 8px; background: #C9A84C; color: #1a1a2e; font-weight: 700; }
   .conversacion .preview { font-size: 0.85rem; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .conversacion .fecha { font-size: 0.7rem; color: #666; margin-top: 4px; }
+  .conversacion.esperando-amarillo { background: rgba(240,181,0,0.10); border-left: 3px solid #f0b500; }
+  .conversacion.esperando-amarillo:hover { background: rgba(240,181,0,0.18); }
+  .conversacion.esperando-rojo { background: rgba(230,57,70,0.12); border-left: 3px solid #e63946; }
+  .conversacion.esperando-rojo:hover { background: rgba(230,57,70,0.20); }
+  .conversacion .esperando-tag { font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; margin-left: 6px; }
+  .conversacion .esperando-amarillo-tag { background: #f0b500; color: #1a1a2e; }
+  .conversacion .esperando-rojo-tag { background: #e63946; color: #fff; }
+  .contador-esperando { background: #e63946; color: #fff; padding: 2px 10px; border-radius: 10px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em; }
   .vacio { padding: 40px 16px; text-align: center; color: #666; }
 
   .mensajes { padding: 16px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 10px; }
@@ -148,7 +156,10 @@
 
 <div class="layout">
   <div class="panel">
-    <h2>Conversaciones</h2>
+    <h2 style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <span>Conversaciones</span>
+      <span id="contadorEsperando" class="contador-esperando" style="display:none"></span>
+    </h2>
     <div class="lista" id="lista"><div class="vacio">Cargando...</div></div>
   </div>
   <div class="panel">
@@ -397,10 +408,36 @@
     conversacionesPrevias = idsActuales;
     primeraCarga = false;
 
-    lista.innerHTML = data.map(c => `
-      <div class="conversacion ${convActiva === c.telefono ? 'activa' : ''}" data-tel="${c.telefono}">
+    // Calcular cuántos minutos lleva cada conversación esperando al vendedor.
+    // Solo cuenta si: hay vendedor asignado, bot pausado, y el último mensaje es del cliente.
+    let esperandoTotal = 0;
+    const ahora = Date.now();
+    const enriquecidas = data.map(c => {
+      let espera = null;
+      if (c.vendedor_asignado && c.bot_pausado && c.ultimo_rol === 'user') {
+        const min = (ahora - new Date(c.ultimo).getTime()) / 60000;
+        if (min >= 30 && min < 120) espera = { clase: 'esperando-amarillo', label: `${Math.floor(min)} min` };
+        else if (min >= 120) {
+          const horas = Math.floor(min / 60);
+          espera = { clase: 'esperando-rojo', label: horas >= 24 ? `${Math.floor(horas/24)}d` : `${horas}h` };
+        }
+      }
+      if (espera) esperandoTotal++;
+      return { ...c, espera };
+    });
+
+    const cont = document.getElementById('contadorEsperando');
+    if (esperandoTotal > 0) {
+      cont.style.display = 'inline-block';
+      cont.textContent = `Esperando: ${esperandoTotal}`;
+    } else {
+      cont.style.display = 'none';
+    }
+
+    lista.innerHTML = enriquecidas.map(c => `
+      <div class="conversacion ${convActiva === c.telefono ? 'activa' : ''} ${c.espera ? c.espera.clase : ''}" data-tel="${c.telefono}">
         <div class="top">
-          <span class="nombre">${escapar(c.nombre || c.telefono)}</span>
+          <span class="nombre">${escapar(c.nombre || c.telefono)}${c.espera ? `<span class="esperando-tag ${c.espera.clase}-tag">⏱ ${c.espera.label}</span>` : ''}</span>
           <span class="canal">${c.canal}</span>
         </div>
         <div class="preview">${escapar(c.preview)}</div>

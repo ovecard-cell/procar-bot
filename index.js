@@ -377,8 +377,10 @@ app.get('/api/conversaciones', (req, res) => {
               ELSE contenido
             END
             FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as preview,
+           (SELECT rol FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as ultimo_rol,
            (SELECT v.nombre FROM asignaciones a JOIN vendedores v ON v.id = a.vendedor_id
-            WHERE a.cliente_telefono = c.telefono ORDER BY a.creado_en DESC LIMIT 1) as vendedor_asignado
+            WHERE a.cliente_telefono = c.telefono ORDER BY a.creado_en DESC LIMIT 1) as vendedor_asignado,
+           (SELECT value FROM settings WHERE key = 'bot_pausado_' || c.telefono) as bot_pausado_raw
     FROM conversaciones c
     LEFT JOIN clientes cl ON cl.telefono = c.telefono
   `;
@@ -397,7 +399,13 @@ app.get('/api/conversaciones', (req, res) => {
 
   query += ` GROUP BY c.telefono ORDER BY ultimo DESC LIMIT 100`;
   const rows = db.prepare(query).all(...params);
-  res.json(normalizarTimestamps(rows, ['ultimo']));
+  // Convertimos bot_pausado_raw (texto 'true'/'false'/null) a booleano y limpiamos
+  const filas = rows.map(r => ({
+    ...r,
+    bot_pausado: r.bot_pausado_raw === 'true',
+    bot_pausado_raw: undefined,
+  }));
+  res.json(normalizarTimestamps(filas, ['ultimo']));
 });
 
 // Vendedor escribe al cliente desde el dashboard

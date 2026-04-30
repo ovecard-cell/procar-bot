@@ -248,17 +248,19 @@ async function procesarColaDeNotificacionesAVendedores() {
 }
 
 function iniciarCron() {
-  // Cada 15 minutos para recordatorios y rescates
+  // Cada 15 minutos: recordatorios al cliente.
+  // Antes acá tambien corria el rescate del bot (que reactivaba a Gonzalo si el
+  // vendedor se colgaba). Lo sacamos: el dashboard ahora muestra alerta visual
+  // al vendedor en vez de meter al bot a la conversacion.
   cron.schedule('*/15 * * * *', () => {
     procesarRecordatorios().catch(err => console.error('[Recordatorios] Crash:', err.message));
-    rescatarConversacionesColgadas().catch(err => console.error('[Rescate] Crash:', err.message));
   });
   // Cada 5 minutos chequeamos la cola de notificaciones a vendedores. Es liviano:
   // si estamos fuera de horario, ni se conecta. Si entramos en horario, vacía la cola.
   cron.schedule('*/5 * * * *', () => {
     procesarColaDeNotificacionesAVendedores().catch(err => console.error('[Cola WA] Crash:', err.message));
   });
-  console.log('[Recordatorios] Cron iniciado (recordatorios + rescate cada 15min, cola WA cada 5min)');
+  console.log('[Recordatorios] Cron iniciado (recordatorios cada 15min, cola WA cada 5min — rescate desactivado)');
 }
 
 module.exports = { iniciarCron, procesarRecordatorios, limpiarRecordatorios, procesarColaDeNotificacionesAVendedores };
