@@ -384,4 +384,104 @@ async function enviarMessenger(recipientId, texto) {
   }
 }
 
-module.exports = { verificarWebhook, recibirMensaje, validarToken, enviarMessenger, enviarInstagram, enviarWhatsApp };
+// ─────────────────────────────────────────────
+// ENVIAR MEDIA (imagen / video) POR CADA CANAL
+// El archivo ya está guardado en MEDIA_DIR y servido por /media/<filename>.
+// Le pasamos a Meta una URL pública HTTPS (la que ve el cliente al request)
+// y Meta la baja por su cuenta.
+// ─────────────────────────────────────────────
+
+async function enviarMessengerMedia(recipientId, urlPublica, tipo) {
+  // tipo: 'image' o 'video'
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v19.0/me/messages`,
+      {
+        recipient: { id: recipientId },
+        message: {
+          attachment: {
+            type: tipo,
+            payload: { url: urlPublica, is_reusable: true },
+          },
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${config.META_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    console.log(`[Messenger] ${tipo} enviado a ${recipientId}: ${urlPublica}`);
+  } catch (err) {
+    describirErrorMeta(err, `enviarMessengerMedia(${tipo}) a ${recipientId}`);
+    throw err;
+  }
+}
+
+async function enviarInstagramMedia(recipientId, urlPublica, tipo) {
+  const token = config.INSTAGRAM_ACCESS_TOKEN || config.META_ACCESS_TOKEN;
+  const url = config.INSTAGRAM_ACCESS_TOKEN
+    ? `https://graph.instagram.com/v21.0/me/messages`
+    : `https://graph.facebook.com/v19.0/me/messages`;
+  try {
+    await axios.post(
+      url,
+      {
+        recipient: { id: recipientId },
+        message: {
+          attachment: {
+            type: tipo,
+            payload: { url: urlPublica, is_reusable: true },
+          },
+        },
+      },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+    console.log(`[Instagram] ${tipo} enviado a ${recipientId}: ${urlPublica}`);
+  } catch (err) {
+    describirErrorMeta(err, `enviarInstagramMedia(${tipo}) a ${recipientId}`);
+    throw err;
+  }
+}
+
+async function enviarWhatsAppMedia(phoneId, destinatario, urlPublica, tipo, caption) {
+  // tipo: 'image' o 'video'. WhatsApp Cloud API acepta link directo.
+  try {
+    const { normalizarTelefonoWA } = require('./mensajero');
+    const destino = normalizarTelefonoWA(destinatario);
+    const mediaPayload = { link: urlPublica };
+    if (caption) mediaPayload.caption = caption;
+    await axios.post(
+      `https://graph.facebook.com/v19.0/${phoneId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: destino,
+        type: tipo,
+        [tipo]: mediaPayload,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${config.WA_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    console.log(`[WhatsApp] ${tipo} enviado a ${destinatario}: ${urlPublica}`);
+  } catch (err) {
+    describirErrorMeta(err, `enviarWhatsAppMedia(${tipo}) a ${destinatario}`);
+    throw err;
+  }
+}
+
+module.exports = {
+  verificarWebhook,
+  recibirMensaje,
+  validarToken,
+  enviarMessenger,
+  enviarInstagram,
+  enviarWhatsApp,
+  enviarMessengerMedia,
+  enviarInstagramMedia,
+  enviarWhatsAppMedia,
+};

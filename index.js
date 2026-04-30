@@ -50,7 +50,13 @@ function setCookieVendedor(res, nombre) {
   const valor = `${nombre}|${ts}|${firma}`;
   res.setHeader('Set-Cookie', `procar_vendedor=${encodeURIComponent(valor)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 60 * 60}`);
 }
-const { verificarWebhook, recibirMensaje, validarToken, enviarMessenger, enviarInstagram, enviarWhatsApp } = require('./webhook');
+const {
+  verificarWebhook, recibirMensaje, validarToken,
+  enviarMessenger, enviarInstagram, enviarWhatsApp,
+  enviarMessengerMedia, enviarInstagramMedia, enviarWhatsAppMedia,
+} = require('./webhook');
+const multer = require('multer');
+const fs = require('fs');
 const { procesarMensaje } = require('./agente');
 const { analizar, generarHTML } = require('./analizar');
 const { distribuirLeads, generarHTMLReporte } = require('./distribuir');
@@ -396,6 +402,111 @@ app.post('/api/conversacion/:telefono/enviar', async (req, res) => {
     res.json({ ok: true, canal });
   } catch (err) {
     console.error('[Enviar manual] Error:', err.message);
+    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// UPLOAD DE MEDIA DESDE EL DASHBOARD
+// El vendedor adjunta una foto/video y se la mandamos al cliente por su canal.
+// Guardamos el archivo en MEDIA_DIR (ya servido por /media), y le pasamos a
+// Meta la URL pública HTTPS — Meta la baja por su cuenta.
+// ─────────────────────────────────────────────
+const MIME_TIPO = {
+  'image/jpeg': { tipo: 'image', ext: 'jpg' },
+  'image/jpg':  { tipo: 'image', ext: 'jpg' },
+  'image/png':  { tipo: 'image', ext: 'png' },
+  'image/webp': { tipo: 'image', ext: 'webp' },
+  'image/gif':  { tipo: 'image', ext: 'gif' },
+  'video/mp4':  { tipo: 'video', ext: 'mp4' },
+  'video/3gpp': { tipo: 'video', ext: '3gp' },
+  'video/quicktime': { tipo: 'video', ext: 'mov' },
+};
+
+const storageMedia = multer.diskStorage({
+  destination: (req, file, cb) => {
+    if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
+    cb(null, MEDIA_DIR);
+  },
+  filename: (req, file, cb) => {
+    const map = MIME_TIPO[file.mimetype];
+    const ext = map ? map.ext : 'bin';
+    cb(null, `${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`);
+  },
+});
+const uploadMedia = multer({
+  storage: storageMedia,
+  limits: { fileSize: 16 * 1024 * 1024 }, // 16MB — limite de WhatsApp Cloud API para video
+  fileFilter: (req, file, cb) => {
+    if (MIME_TIPO[file.mimetype]) cb(null, true);
+    else cb(new Error(`Tipo de archivo no soportado: ${file.mimetype}`));
+  },
+});
+
+app.post('/api/conversacion/:telefono/enviar-media', (req, res, next) => {
+  uploadMedia.single('archivo')(req, res, (err) => {
+    if (err) {
+      console.error('[Enviar media] Error de multer:', err.message);
+      return res.status(400).json({ error: err.message });
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    const { db, guardarMensaje } = require('./database');
+    const telefono = req.params.telefono;
+    const vendedor = (req.body.vendedor || '').trim();
+    const caption = (req.body.caption || '').trim();
+
+    if (!req.file) return res.status(400).json({ error: 'Falta el archivo' });
+
+    const map = MIME_TIPO[req.file.mimetype];
+    if (!map) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: `Tipo no soportado: ${req.file.mimetype}` });
+    }
+
+    // Detectar el canal a partir de la última conversación
+    const ultimo = db.prepare(`
+      SELECT canal FROM conversaciones WHERE telefono = ? ORDER BY creado_en DESC LIMIT 1
+    `).get(telefono);
+    if (!ultimo) {
+      fs.unlinkSync(req.file.path);
+      return res.status(404).json({ error: 'No hay conversación previa con ese cliente' });
+    }
+    const canal = ultimo.canal;
+
+    // URL publica HTTPS para que Meta pueda bajar el archivo
+    const baseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const urlPublica = `${baseUrl}/media/${req.file.filename}`;
+
+    // Pausar el bot para esta conversación
+    setSetting(`bot_pausado_${telefono}`, 'true');
+
+    // Mandar al cliente segun canal
+    if (canal === 'messenger' || canal === 'facebook') {
+      await enviarMessengerMedia(telefono, urlPublica, map.tipo);
+      if (caption) await enviarMessenger(telefono, caption);
+    } else if (canal === 'instagram') {
+      await enviarInstagramMedia(telefono, urlPublica, map.tipo);
+      if (caption) await enviarInstagram(telefono, caption);
+    } else if (canal === 'whatsapp') {
+      const config = require('./config');
+      await enviarWhatsAppMedia(config.WHATSAPP_PHONE_ID, telefono, urlPublica, map.tipo, caption || undefined);
+    } else {
+      return res.status(400).json({ error: `Canal ${canal} no soportado` });
+    }
+
+    // Guardar en la DB. Tipo en DB: 'imagen' | 'video' (para que coincida con lo que ya guardamos del cliente)
+    const tipoDB = map.tipo === 'image' ? 'imagen' : 'video';
+    const contenido = vendedor
+      ? `[${vendedor}] ${caption || `[${tipoDB}]`}`
+      : (caption || `[${tipoDB}]`);
+    guardarMensaje({ telefono, rol: 'assistant', contenido, canal, tipo: tipoDB, archivo: req.file.filename });
+
+    res.json({ ok: true, canal, archivo: req.file.filename, tipo: tipoDB });
+  } catch (err) {
+    console.error('[Enviar media] Error:', err.message);
     res.status(500).json({ error: err.response?.data?.error?.message || err.message });
   }
 });

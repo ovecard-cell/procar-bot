@@ -70,12 +70,18 @@
   .selecciona { display: flex; align-items: center; justify-content: center; height: 100%; color: #666; flex: 1; }
   .evento-escalado { align-self: center; background: #C9A84C; color: #1a1a2e; padding: 8px 14px; border-radius: 16px; font-size: 0.82rem; font-weight: 700; margin: 8px 0; }
 
-  .compose { padding: 12px; background: #232342; border-top: 1px solid #333; display: flex; gap: 8px; align-items: center; }
-  .compose input { flex: 1; padding: 10px 14px; border: 1px solid #444; background: #1a1a2e; color: #e8e8f0; border-radius: 6px; font-size: 0.92rem; outline: none; }
-  .compose input:focus { border-color: #C9A84C; }
+  .compose { padding: 12px; background: #232342; border-top: 1px solid #333; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .compose input[type=text] { flex: 1; min-width: 0; padding: 10px 14px; border: 1px solid #444; background: #1a1a2e; color: #e8e8f0; border-radius: 6px; font-size: 0.92rem; outline: none; }
+  .compose input[type=text]:focus { border-color: #C9A84C; }
   .compose button { background: #C9A84C; color: #1a1a2e; border: none; padding: 10px 18px; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 0.85rem; }
   .compose button:hover { background: #d8b860; }
   .compose button:disabled { background: #555; color: #888; cursor: not-allowed; }
+  .compose .adjuntar { background: transparent; color: #C9A84C; padding: 8px 10px; border: 1px solid #444; font-size: 1.1rem; }
+  .compose .adjuntar:hover { background: #1a1a2e; border-color: #C9A84C; }
+  .preview-media { width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px; background: #1a1a2e; border: 1px solid #444; border-radius: 6px; }
+  .preview-media img, .preview-media video { max-height: 80px; max-width: 120px; border-radius: 4px; }
+  .preview-media .info { flex: 1; font-size: 0.8rem; color: #aaa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .preview-media .quitar { background: #c33; color: #fff; padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem; }
   .estado-bot { padding: 8px 12px; background: #232342; border-bottom: 1px solid #333; font-size: 0.82rem; color: #aaa; display: flex; justify-content: space-between; align-items: center; }
   .pausado-pill { background: #e63946; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.72rem; font-weight: 700; }
   .activo-pill { background: #2a9d8f; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.72rem; font-weight: 700; }
@@ -152,7 +158,14 @@
     </div>
     <div class="mensajes" id="mensajes"><div class="selecciona">Elegí una conversación de la izquierda</div></div>
     <div class="compose" id="compose" style="display:none">
-      <input type="text" id="inputMsg" placeholder="Escribir como vendedor..." />
+      <div class="preview-media" id="previewMedia" style="display:none">
+        <div id="previewThumb"></div>
+        <div class="info" id="previewInfo"></div>
+        <button class="quitar" id="btnQuitarMedia" type="button">Quitar</button>
+      </div>
+      <button id="btnAdjuntar" class="adjuntar" type="button" title="Adjuntar foto o video">📎</button>
+      <input type="file" id="fileMedia" accept="image/*,video/*" style="display:none" />
+      <input type="text" id="inputMsg" placeholder="Escribir como vendedor... (Ctrl+V para pegar captura)" />
       <button id="btnEnviar">Enviar</button>
     </div>
   </div>
@@ -537,12 +550,71 @@
     if (data.ok) cargarVendedores(); else alert('Error: ' + (data.error || 'desconocido'));
   };
 
-  // Enviar mensaje como vendedor
+  // Estado del archivo a adjuntar (foto o video)
+  let archivoAdjunto = null;
+
+  function mostrarPreviewMedia(file) {
+    archivoAdjunto = file;
+    const preview = document.getElementById('previewMedia');
+    const thumb = document.getElementById('previewThumb');
+    const info = document.getElementById('previewInfo');
+    thumb.innerHTML = '';
+    if (file.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(file);
+      thumb.appendChild(img);
+    } else if (file.type.startsWith('video/')) {
+      const vid = document.createElement('video');
+      vid.src = URL.createObjectURL(file);
+      vid.muted = true;
+      thumb.appendChild(vid);
+    }
+    const tamMB = (file.size / 1024 / 1024).toFixed(1);
+    info.textContent = `${file.name || 'captura'} · ${tamMB} MB`;
+    preview.style.display = 'flex';
+  }
+
+  function limpiarPreviewMedia() {
+    archivoAdjunto = null;
+    const preview = document.getElementById('previewMedia');
+    const thumb = document.getElementById('previewThumb');
+    thumb.innerHTML = '';
+    preview.style.display = 'none';
+    document.getElementById('fileMedia').value = '';
+  }
+
+  // Enviar mensaje como vendedor (texto o media)
   async function enviarMensaje() {
     if (!convActiva) return;
     const input = document.getElementById('inputMsg');
     const btn = document.getElementById('btnEnviar');
     const texto = input.value.trim();
+
+    // Si hay archivo, va por el endpoint de media (con caption opcional)
+    if (archivoAdjunto) {
+      btn.disabled = true;
+      try {
+        const fd = new FormData();
+        fd.append('archivo', archivoAdjunto, archivoAdjunto.name || 'captura.png');
+        fd.append('vendedor', VENDEDOR || 'Procar');
+        if (texto) fd.append('caption', texto);
+        const res = await fetch('/api/conversacion/' + encodeURIComponent(convActiva) + '/enviar-media', {
+          method: 'POST',
+          body: fd,
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'Error desconocido');
+        input.value = '';
+        limpiarPreviewMedia();
+        cargarMensajes(convActiva);
+      } catch (err) {
+        alert('Error mandando media: ' + err.message);
+      }
+      btn.disabled = false;
+      input.focus();
+      return;
+    }
+
     if (!texto) return;
     btn.disabled = true;
     try {
@@ -565,6 +637,32 @@
   document.getElementById('btnEnviar').addEventListener('click', enviarMensaje);
   document.getElementById('inputMsg').addEventListener('keydown', e => {
     if (e.key === 'Enter') enviarMensaje();
+  });
+
+  // Boton de adjuntar — abre el file picker
+  document.getElementById('btnAdjuntar').addEventListener('click', () => {
+    document.getElementById('fileMedia').click();
+  });
+  document.getElementById('fileMedia').addEventListener('change', e => {
+    const file = e.target.files && e.target.files[0];
+    if (file) mostrarPreviewMedia(file);
+  });
+  document.getElementById('btnQuitarMedia').addEventListener('click', limpiarPreviewMedia);
+
+  // Ctrl+V — pegar captura desde el clipboard en el input de texto del chat
+  document.getElementById('inputMsg').addEventListener('paste', e => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (const it of items) {
+      if (it.kind === 'file') {
+        const file = it.getAsFile();
+        if (file && (file.type.startsWith('image/') || file.type.startsWith('video/'))) {
+          e.preventDefault();
+          mostrarPreviewMedia(file);
+          return;
+        }
+      }
+    }
   });
 
   // Reactivar bot para una conversación
