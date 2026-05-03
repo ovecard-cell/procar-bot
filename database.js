@@ -134,6 +134,11 @@ function inicializarDB() {
   // Backfill: cualquier asignacion vieja sin etapa la dejamos como 'nuevo'
   try { db.exec("UPDATE asignaciones SET etapa = 'nuevo' WHERE etapa IS NULL OR etapa = ''"); } catch (e) { /* ignore */ }
 
+  // Migración: inventario con tipo (auto/moto) y link a la publi de Marketplace.
+  try { db.exec("ALTER TABLE autos ADD COLUMN tipo TEXT DEFAULT 'auto'"); } catch (e) { /* ya existe */ }
+  try { db.exec('ALTER TABLE autos ADD COLUMN link_publi TEXT'); } catch (e) { /* ya existe */ }
+  try { db.exec("UPDATE autos SET tipo = 'auto' WHERE tipo IS NULL OR tipo = ''"); } catch (e) { /* ignore */ }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
@@ -327,6 +332,93 @@ function marcarSeguimientoEnviado(id) {
 }
 
 // ─────────────────────────────────────────────
+// INVENTARIO (autos + motos)
+// La columna 'fotos' guarda un JSON array de filenames servidos por /media.
+// La columna 'link_publi' guarda la URL de la publi de Marketplace.
+// ─────────────────────────────────────────────
+
+function listarInventario({ tipo, soloDisponibles } = {}) {
+  let query = 'SELECT * FROM autos';
+  const conds = [];
+  const params = [];
+  if (tipo) { conds.push('LOWER(tipo) = LOWER(?)'); params.push(tipo); }
+  if (soloDisponibles) { conds.push('disponible = 1'); }
+  if (conds.length) query += ' WHERE ' + conds.join(' AND ');
+  query += ' ORDER BY disponible DESC, creado_en DESC';
+  const filas = db.prepare(query).all(...params);
+  return filas.map(parsearFotos);
+}
+
+function obtenerAuto(id) {
+  const fila = db.prepare('SELECT * FROM autos WHERE id = ?').get(id);
+  return fila ? parsearFotos(fila) : null;
+}
+
+function parsearFotos(fila) {
+  let fotos = [];
+  if (fila.fotos) {
+    try { fotos = JSON.parse(fila.fotos); }
+    catch (e) { fotos = String(fila.fotos).split(',').map(s => s.trim()).filter(Boolean); }
+  }
+  return { ...fila, fotos };
+}
+
+function crearAuto(data) {
+  const fotosJson = JSON.stringify(data.fotos || []);
+  const r = db.prepare(`
+    INSERT INTO autos (tipo, marca, modelo, anio, precio, km, combustible, transmision, color, descripcion, link_publi, fotos, disponible)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    data.tipo || 'auto',
+    data.marca,
+    data.modelo,
+    parseInt(data.anio, 10) || null,
+    parseInt(data.precio, 10) || 0,
+    parseInt(data.km, 10) || 0,
+    data.combustible || '',
+    data.transmision || '',
+    data.color || null,
+    data.descripcion || null,
+    data.link_publi || null,
+    fotosJson,
+    data.disponible === false ? 0 : 1
+  );
+  return r.lastInsertRowid;
+}
+
+function actualizarAuto(id, data) {
+  const actual = obtenerAuto(id);
+  if (!actual) throw new Error('Auto no encontrado');
+  const fotos = data.fotos !== undefined ? data.fotos : actual.fotos;
+  db.prepare(`
+    UPDATE autos
+    SET tipo = ?, marca = ?, modelo = ?, anio = ?, precio = ?, km = ?,
+        combustible = ?, transmision = ?, color = ?, descripcion = ?,
+        link_publi = ?, fotos = ?, disponible = ?
+    WHERE id = ?
+  `).run(
+    data.tipo ?? actual.tipo,
+    data.marca ?? actual.marca,
+    data.modelo ?? actual.modelo,
+    data.anio !== undefined ? (parseInt(data.anio, 10) || null) : actual.anio,
+    data.precio !== undefined ? (parseInt(data.precio, 10) || 0) : actual.precio,
+    data.km !== undefined ? (parseInt(data.km, 10) || 0) : actual.km,
+    data.combustible ?? actual.combustible,
+    data.transmision ?? actual.transmision,
+    data.color ?? actual.color,
+    data.descripcion ?? actual.descripcion,
+    data.link_publi ?? actual.link_publi,
+    JSON.stringify(fotos),
+    data.disponible !== undefined ? (data.disponible ? 1 : 0) : actual.disponible,
+    id
+  );
+}
+
+function eliminarAuto(id) {
+  db.prepare('DELETE FROM autos WHERE id = ?').run(id);
+}
+
+// ─────────────────────────────────────────────
 // EMBUDO DE ETAPAS
 // Etapas validas: nuevo → en_conversacion → cotizado → visita_acordada → vendido | perdido
 // ─────────────────────────────────────────────
@@ -503,6 +595,11 @@ module.exports = {
   obtenerEmbudo,
   ETAPAS_VALIDAS,
   ETAPAS_CERRADAS,
+  listarInventario,
+  obtenerAuto,
+  crearAuto,
+  actualizarAuto,
+  eliminarAuto,
   getSetting,
   setSetting,
   autenticarVendedor,

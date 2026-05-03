@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Inventario — Procar</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f0f1a; color: #e8e8f0; margin: 0; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; background: #1a1a2e; border-bottom: 1px solid #2a2a3e; }
+  header h1 { color: #C9A84C; margin: 0; font-size: 1.2rem; letter-spacing: 0.05em; }
+  header .links a, header .links button { color: #888; text-decoration: none; margin-left: 16px; font-size: 0.85rem; background: transparent; border: none; cursor: pointer; }
+  header .links a:hover, header .links button:hover { color: #C9A84C; }
+
+  .filtros { display: flex; gap: 8px; padding: 12px 24px; background: #15152a; border-bottom: 1px solid #2a2a3e; flex-wrap: wrap; align-items: center; }
+  .filtros button { background: #1a1a2e; color: #aaa; border: 1px solid #2a2a3e; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
+  .filtros button.activo { background: #C9A84C; color: #1a1a2e; border-color: #C9A84C; font-weight: 700; }
+  .filtros .agregar { background: #4caf50; color: #fff; margin-left: auto; padding: 8px 16px; font-weight: 700; border: none; }
+  .filtros .agregar:hover { background: #5cb85c; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; padding: 16px 24px; }
+  .vacio { text-align: center; color: #555; padding: 80px 16px; font-style: italic; }
+
+  .card { background: #1a1a2e; border-radius: 10px; overflow: hidden; border: 1px solid #2a2a3e; transition: transform 0.15s; }
+  .card:hover { transform: translateY(-2px); }
+  .card.no-disp { opacity: 0.55; }
+  .card .foto-principal { width: 100%; aspect-ratio: 4/3; object-fit: cover; background: #15152a; display: block; }
+  .card .sin-foto { width: 100%; aspect-ratio: 4/3; background: #15152a; display: flex; align-items: center; justify-content: center; color: #444; font-size: 2rem; }
+  .card .info { padding: 12px; }
+  .card .titulo { font-weight: 700; color: #e8e8f0; font-size: 0.95rem; margin-bottom: 4px; }
+  .card .subtitulo { color: #888; font-size: 0.78rem; margin-bottom: 8px; }
+  .card .precio { color: #C9A84C; font-size: 1.1rem; font-weight: 800; margin-bottom: 6px; }
+  .card .km { color: #aaa; font-size: 0.78rem; }
+  .card .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .card .badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px; background: #2a2a3e; color: #aaa; }
+  .card .badge.tipo-moto { background: #6a3da8; color: #fff; }
+  .card .badge.tipo-auto { background: #2c5d8a; color: #fff; }
+  .card .badge.no-disp { background: #555; color: #ccc; }
+  .card .acciones { display: flex; gap: 6px; margin-top: 10px; }
+  .card .acciones button, .card .acciones a { flex: 1; padding: 6px 8px; border-radius: 4px; font-size: 0.75rem; cursor: pointer; border: none; text-align: center; text-decoration: none; }
+  .card .editar { background: #C9A84C; color: #1a1a2e; font-weight: 700; }
+  .card .ver-publi { background: #2a2a3e; color: #C9A84C; }
+  .card .borrar { background: #5a1f1f; color: #ff8a8a; }
+
+  /* Modal del form */
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: none; align-items: flex-start; justify-content: center; z-index: 100; overflow-y: auto; padding: 32px 16px; }
+  .modal.activo { display: flex; }
+  .modal-card { background: #1a1a2e; border-radius: 12px; padding: 24px; width: 100%; max-width: 560px; border-top: 4px solid #C9A84C; }
+  .modal-card h2 { color: #C9A84C; margin: 0 0 16px 0; font-size: 1.1rem; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .form-grid .full { grid-column: span 2; }
+  .form-grid label { display: block; }
+  .form-grid label .lbl { color: #C9A84C; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; display: block; }
+  .form-grid input, .form-grid select, .form-grid textarea { width: 100%; padding: 8px 10px; background: #0f0f1a; color: #fff; border: 1px solid #2a2a3e; border-radius: 6px; font-size: 0.88rem; font-family: inherit; box-sizing: border-box; }
+  .form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus { border-color: #C9A84C; outline: none; }
+  .form-grid textarea { resize: vertical; min-height: 60px; }
+  .fotos-existentes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .fotos-existentes .foto-chip { position: relative; width: 70px; height: 50px; border-radius: 4px; overflow: hidden; background: #0f0f1a; }
+  .fotos-existentes .foto-chip img { width: 100%; height: 100%; object-fit: cover; }
+  .fotos-existentes .foto-chip .quitar { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.7); color: #fff; border: none; width: 18px; height: 18px; border-radius: 50%; cursor: pointer; font-size: 0.7rem; line-height: 1; padding: 0; }
+  .modal-card .botones { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  .modal-card .botones button { padding: 8px 16px; border-radius: 6px; border: none; font-weight: 700; cursor: pointer; font-size: 0.85rem; }
+  .modal-card .cancel { background: #2a2a3e; color: #aaa; }
+  .modal-card .ok { background: #C9A84C; color: #1a1a2e; }
+  .modal-card .err { color: #e63946; font-size: 0.8rem; margin-top: 8px; min-height: 16px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📦 INVENTARIO</h1>
+  <div class="links">
+    <span id="contexto" style="color:#aaa; font-size:0.85rem; margin-right:12px"></span>
+    <a id="linkVolver" href="/admin">← Volver al dashboard</a>
+  </div>
+</header>
+
+<div class="filtros">
+  <button class="activo" data-tipo="">Todos</button>
+  <button data-tipo="auto">🚗 Autos</button>
+  <button data-tipo="moto">🏍️ Motos</button>
+  <button data-disp class="activo">Disponibles</button>
+  <button class="agregar" id="btnAgregar">+ Agregar al inventario</button>
+</div>
+
+<div class="grid" id="grid"><div class="vacio">Cargando...</div></div>
+
+<!-- Modal del form -->
+<div class="modal" id="modal">
+  <div class="modal-card">
+    <h2 id="modalTitulo">Agregar al inventario</h2>
+    <form id="formInventario">
+      <input type="hidden" id="campoId" />
+      <div class="form-grid">
+        <label><span class="lbl">Tipo</span>
+          <select id="campoTipo" required>
+            <option value="auto">🚗 Auto</option>
+            <option value="moto">🏍️ Moto</option>
+          </select>
+        </label>
+        <label><span class="lbl">Disponible</span>
+          <select id="campoDisponible">
+            <option value="true">Sí</option>
+            <option value="false">No</option>
+          </select>
+        </label>
+        <label><span class="lbl">Marca *</span><input id="campoMarca" required placeholder="Ford" /></label>
+        <label><span class="lbl">Modelo *</span><input id="campoModelo" required placeholder="Fiesta S Plus" /></label>
+        <label><span class="lbl">Año *</span><input type="number" id="campoAnio" required placeholder="2018" min="1980" max="2030" /></label>
+        <label><span class="lbl">Precio (ARS) *</span><input type="number" id="campoPrecio" required placeholder="15500000" min="0" /></label>
+        <label><span class="lbl">Kilómetros</span><input type="number" id="campoKm" placeholder="80000" min="0" /></label>
+        <label><span class="lbl">Combustible</span>
+          <select id="campoCombustible">
+            <option value="">—</option>
+            <option value="Nafta">Nafta</option>
+            <option value="Diesel">Diesel</option>
+            <option value="GNC">GNC</option>
+            <option value="Híbrido">Híbrido</option>
+            <option value="Eléctrico">Eléctrico</option>
+          </select>
+        </label>
+        <label><span class="lbl">Transmisión</span>
+          <select id="campoTransmision">
+            <option value="">—</option>
+            <option value="Manual">Manual</option>
+            <option value="Automático">Automático</option>
+          </select>
+        </label>
+        <label><span class="lbl">Color</span><input id="campoColor" placeholder="Blanco" /></label>
+        <label class="full"><span class="lbl">Link de la publi de Marketplace</span><input type="url" id="campoLink" placeholder="https://www.facebook.com/marketplace/item/..." /></label>
+        <label class="full"><span class="lbl">Descripción</span><textarea id="campoDescripcion" rows="2" placeholder="Línea nueva, único dueño, service al día..."></textarea></label>
+        <label class="full"><span class="lbl">Fotos (jpg/png, hasta 8)</span>
+          <input type="file" id="campoFotos" accept="image/*" multiple />
+          <div class="fotos-existentes" id="fotosExistentes"></div>
+        </label>
+      </div>
+      <div class="err" id="formErr"></div>
+      <div class="botones">
+        <button type="button" class="cancel" id="btnCancelar">Cancelar</button>
+        <button type="submit" class="ok">Guardar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  const matchVend = location.pathname.match(/^\/vendedor\/([^/]+)\/inventario/);
+  const VENDEDOR = matchVend ? decodeURIComponent(matchVend[1]) : null;
+  if (VENDEDOR) {
+    document.getElementById('contexto').textContent = `Vendedor: ${VENDEDOR}`;
+    document.getElementById('linkVolver').href = `/vendedor/${encodeURIComponent(VENDEDOR)}`;
+  }
+
+  const grid = document.getElementById('grid');
+  const modal = document.getElementById('modal');
+  let filtroTipo = '';
+  let filtroSoloDisponibles = true;
+  let fotosExistentesEnEdit = []; // filenames que ya tenia el auto al editar
+
+  function escapar(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function fmtPrecio(n) {
+    if (n == null || n === 0) return '—';
+    return '$ ' + Number(n).toLocaleString('es-AR');
+  }
+
+  function fmtKm(n) {
+    if (n == null || n === 0) return '— km';
+    return Number(n).toLocaleString('es-AR') + ' km';
+  }
+
+  async function cargar() {
+    const params = new URLSearchParams();
+    if (filtroTipo) params.set('tipo', filtroTipo);
+    if (filtroSoloDisponibles) params.set('disponibles', 'true');
+    const res = await fetch('/api/inventario?' + params);
+    const data = await res.json();
+    renderGrid(data.items || []);
+  }
+
+  function renderGrid(items) {
+    if (!items.length) {
+      grid.innerHTML = '<div class="vacio">No hay autos / motos cargados todavía.<br>Apretá <strong>+ Agregar al inventario</strong> para empezar.</div>';
+      return;
+    }
+    grid.innerHTML = items.map(it => {
+      const fotoUrl = it.fotos && it.fotos.length ? `/media/${it.fotos[0]}` : null;
+      const tipoLabel = it.tipo === 'moto' ? '🏍️ Moto' : '🚗 Auto';
+      return `
+        <div class="card ${it.disponible ? '' : 'no-disp'}">
+          ${fotoUrl
+            ? `<img class="foto-principal" src="${fotoUrl}" alt="${escapar(it.marca + ' ' + it.modelo)}" />`
+            : `<div class="sin-foto">📷</div>`}
+          <div class="info">
+            <div class="titulo">${escapar(it.marca)} ${escapar(it.modelo)}</div>
+            <div class="subtitulo">${it.anio || '—'} · ${escapar(it.combustible || '—')} · ${escapar(it.transmision || '—')}</div>
+            <div class="precio">${fmtPrecio(it.precio)}</div>
+            <div class="km">${fmtKm(it.km)}${it.color ? ' · ' + escapar(it.color) : ''}</div>
+            <div class="badges">
+              <span class="badge tipo-${it.tipo === 'moto' ? 'moto' : 'auto'}">${tipoLabel}</span>
+              ${!it.disponible ? '<span class="badge no-disp">No disponible</span>' : ''}
+            </div>
+            <div class="acciones">
+              <button class="editar" data-id="${it.id}">Editar</button>
+              ${it.link_publi ? `<a class="ver-publi" href="${escapar(it.link_publi)}" target="_blank">Ver publi</a>` : ''}
+              <button class="borrar" data-id="${it.id}">🗑</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    grid.querySelectorAll('.editar').forEach(b => b.addEventListener('click', () => abrirEditar(parseInt(b.dataset.id, 10))));
+    grid.querySelectorAll('.borrar').forEach(b => b.addEventListener('click', () => borrarItem(parseInt(b.dataset.id, 10))));
+  }
+
+  // Filtros
+  document.querySelectorAll('.filtros button[data-tipo]').forEach(b => {
+    b.addEventListener('click', () => {
+      filtroTipo = b.dataset.tipo;
+      document.querySelectorAll('.filtros button[data-tipo]').forEach(x => x.classList.remove('activo'));
+      b.classList.add('activo');
+      cargar();
+    });
+  });
+  document.querySelector('.filtros button[data-disp]').addEventListener('click', e => {
+    filtroSoloDisponibles = !filtroSoloDisponibles;
+    e.target.classList.toggle('activo', filtroSoloDisponibles);
+    e.target.textContent = filtroSoloDisponibles ? 'Disponibles' : 'Todos los estados';
+    cargar();
+  });
+
+  // Modal abrir / cerrar
+  document.getElementById('btnAgregar').addEventListener('click', () => abrirNuevo());
+  document.getElementById('btnCancelar').addEventListener('click', () => modal.classList.remove('activo'));
+
+  function abrirNuevo() {
+    document.getElementById('modalTitulo').textContent = 'Agregar al inventario';
+    document.getElementById('formInventario').reset();
+    document.getElementById('campoId').value = '';
+    fotosExistentesEnEdit = [];
+    document.getElementById('fotosExistentes').innerHTML = '';
+    document.getElementById('formErr').textContent = '';
+    modal.classList.add('activo');
+  }
+
+  async function abrirEditar(id) {
+    document.getElementById('formErr').textContent = '';
+    const res = await fetch('/api/inventario/' + id);
+    if (!res.ok) { alert('No se pudo cargar el item'); return; }
+    const it = await res.json();
+    document.getElementById('modalTitulo').textContent = `Editar: ${it.marca} ${it.modelo}`;
+    document.getElementById('campoId').value = it.id;
+    document.getElementById('campoTipo').value = it.tipo || 'auto';
+    document.getElementById('campoDisponible').value = it.disponible ? 'true' : 'false';
+    document.getElementById('campoMarca').value = it.marca || '';
+    document.getElementById('campoModelo').value = it.modelo || '';
+    document.getElementById('campoAnio').value = it.anio || '';
+    document.getElementById('campoPrecio').value = it.precio || '';
+    document.getElementById('campoKm').value = it.km || '';
+    document.getElementById('campoCombustible').value = it.combustible || '';
+    document.getElementById('campoTransmision').value = it.transmision || '';
+    document.getElementById('campoColor').value = it.color || '';
+    document.getElementById('campoLink').value = it.link_publi || '';
+    document.getElementById('campoDescripcion').value = it.descripcion || '';
+    document.getElementById('campoFotos').value = '';
+    fotosExistentesEnEdit = (it.fotos || []).slice();
+    renderFotosExistentes();
+    modal.classList.add('activo');
+  }
+
+  function renderFotosExistentes() {
+    const cont = document.getElementById('fotosExistentes');
+    cont.innerHTML = fotosExistentesEnEdit.map((f, idx) => `
+      <div class="foto-chip">
+        <img src="/media/${escapar(f)}" />
+        <button type="button" class="quitar" data-idx="${idx}">×</button>
+      </div>
+    `).join('');
+    cont.querySelectorAll('.quitar').forEach(b => b.addEventListener('click', () => {
+      const idx = parseInt(b.dataset.idx, 10);
+      fotosExistentesEnEdit.splice(idx, 1);
+      renderFotosExistentes();
+    }));
+  }
+
+  // Submit del form
+  document.getElementById('formInventario').addEventListener('submit', async e => {
+    e.preventDefault();
+    const id = document.getElementById('campoId').value;
+    const fd = new FormData();
+    fd.append('tipo', document.getElementById('campoTipo').value);
+    fd.append('disponible', document.getElementById('campoDisponible').value);
+    fd.append('marca', document.getElementById('campoMarca').value.trim());
+    fd.append('modelo', document.getElementById('campoModelo').value.trim());
+    fd.append('anio', document.getElementById('campoAnio').value);
+    fd.append('precio', document.getElementById('campoPrecio').value);
+    fd.append('km', document.getElementById('campoKm').value || '0');
+    fd.append('combustible', document.getElementById('campoCombustible').value);
+    fd.append('transmision', document.getElementById('campoTransmision').value);
+    fd.append('color', document.getElementById('campoColor').value.trim());
+    fd.append('link_publi', document.getElementById('campoLink').value.trim());
+    fd.append('descripcion', document.getElementById('campoDescripcion').value.trim());
+    if (id) {
+      fd.append('fotos_existentes', JSON.stringify(fotosExistentesEnEdit));
+    }
+    const files = document.getElementById('campoFotos').files;
+    for (const f of files) fd.append('fotos', f);
+
+    const url = id ? `/api/inventario/${id}` : '/api/inventario';
+    const method = id ? 'PATCH' : 'POST';
+    try {
+      const res = await fetch(url, { method, body: fd });
+      const data = await res.json();
+      if (!data.ok && !data.id) {
+        document.getElementById('formErr').textContent = data.error || 'Error al guardar';
+        return;
+      }
+      modal.classList.remove('activo');
+      cargar();
+    } catch (err) {
+      document.getElementById('formErr').textContent = err.message;
+    }
+  });
+
+  async function borrarItem(id) {
+    if (!confirm('¿Borrar este item del inventario?')) return;
+    const res = await fetch('/api/inventario/' + id, { method: 'DELETE' });
+    const data = await res.json();
+    if (!data.ok) { alert('Error: ' + (data.error || 'no se pudo borrar')); return; }
+    cargar();
+  }
+
+  cargar();
+</script>
+
+</body>
+</html>

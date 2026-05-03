@@ -125,6 +125,7 @@
 
 <div class="nav-links">
   <a id="linkEmbudo" href="/admin/embudo">🪜 Embudo de leads</a>
+  <a id="linkInventario" href="/admin/inventario">📦 Inventario</a>
   <a href="/analizar?desde=2026-04-20" target="_blank">📊 Análisis con Claude</a>
   <a href="/distribuir?desde=2026-04-20" target="_blank">📤 Distribuir a vendedores</a>
   <a href="/demo" target="_blank">💬 Probar Gonzalo</a>
@@ -245,6 +246,9 @@
     // Link al embudo apunta al filtrado por vendedor
     const linkEmb = document.getElementById('linkEmbudo');
     if (linkEmb) linkEmb.href = `/vendedor/${encodeURIComponent(VENDEDOR)}/embudo`;
+    // Link al inventario tambien por la ruta de vendedor (inventario es compartido pero la ruta requiere auth)
+    const linkInv = document.getElementById('linkInventario');
+    if (linkInv) linkInv.href = `/vendedor/${encodeURIComponent(VENDEDOR)}/inventario`;
   }
 
   // Carga el estado de disponibilidad del vendedor logueado y arma el banner.

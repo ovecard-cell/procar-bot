@@ -17,6 +17,7 @@ const {
   getSetting, setSetting, autenticarVendedor, cambiarPassword, MEDIA_DIR,
   obtenerEmbudo, actualizarEtapaAsignacion, ETAPAS_VALIDAS,
   obtenerUltimaAsignacionPorTelefono, avanzarAEnConversacion,
+  listarInventario, obtenerAuto, crearAuto, actualizarAuto, eliminarAuto,
 } = require('./database');
 
 const COOKIE_SECRET = process.env.COOKIE_SECRET || 'procar-secret-' + (process.env.ANTHROPIC_API_KEY || 'default').slice(0, 16);
@@ -102,6 +103,41 @@ function normalizarTimestamps(obj, campos) {
   return obj;
 }
 
+// ─────────────────────────────────────────────
+// UPLOAD DE MEDIA — multer compartido por chat-media e inventario.
+// Guarda en MEDIA_DIR (servido por /media). Acepta imagenes y videos chicos.
+// ─────────────────────────────────────────────
+const MIME_TIPO = {
+  'image/jpeg': { tipo: 'image', ext: 'jpg' },
+  'image/jpg':  { tipo: 'image', ext: 'jpg' },
+  'image/png':  { tipo: 'image', ext: 'png' },
+  'image/webp': { tipo: 'image', ext: 'webp' },
+  'image/gif':  { tipo: 'image', ext: 'gif' },
+  'video/mp4':  { tipo: 'video', ext: 'mp4' },
+  'video/3gpp': { tipo: 'video', ext: '3gp' },
+  'video/quicktime': { tipo: 'video', ext: 'mov' },
+};
+
+const storageMedia = multer.diskStorage({
+  destination: (req, file, cb) => {
+    if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
+    cb(null, MEDIA_DIR);
+  },
+  filename: (req, file, cb) => {
+    const map = MIME_TIPO[file.mimetype];
+    const ext = map ? map.ext : 'bin';
+    cb(null, `${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`);
+  },
+});
+const uploadMedia = multer({
+  storage: storageMedia,
+  limits: { fileSize: 16 * 1024 * 1024 }, // 16MB — limite de WhatsApp Cloud API para video
+  fileFilter: (req, file, cb) => {
+    if (MIME_TIPO[file.mimetype]) cb(null, true);
+    else cb(new Error(`Tipo de archivo no soportado: ${file.mimetype}`));
+  },
+});
+
 // Health check
 app.get('/', (req, res) => {
   res.send('Bot Procar funcionando correctamente');
@@ -167,6 +203,19 @@ app.get('/admin', (req, res) => {
 // Vista del embudo de leads (admin ve todo, vendedor solo el suyo)
 app.get('/admin/embudo', (req, res) => {
   res.sendFile(path.join(__dirname, 'embudo.html'));
+});
+
+// Vista del inventario (mismo HTML para admin y vendedor — todos pueden cargar/editar)
+app.get('/admin/inventario', (req, res) => {
+  res.sendFile(path.join(__dirname, 'inventario.html'));
+});
+app.get('/vendedor/:nombre/inventario', (req, res) => {
+  const autenticado = getVendedorAutenticado(req);
+  const pedido = req.params.nombre;
+  if (autenticado && autenticado.toLowerCase() === pedido.toLowerCase()) {
+    return res.sendFile(path.join(__dirname, 'inventario.html'));
+  }
+  res.redirect(`/vendedor/${encodeURIComponent(pedido)}`);
 });
 app.get('/vendedor/:nombre/embudo', (req, res) => {
   const autenticado = getVendedorAutenticado(req);
@@ -350,6 +399,86 @@ app.get('/api/embudo', (req, res) => {
   });
 });
 
+// ─────────────────────────────────────────────
+// INVENTARIO — autos y motos
+// ─────────────────────────────────────────────
+app.get('/api/inventario', (req, res) => {
+  const tipo = req.query.tipo;
+  const soloDisponibles = req.query.disponibles === 'true';
+  res.json({ items: listarInventario({ tipo, soloDisponibles }) });
+});
+
+app.get('/api/inventario/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const auto = obtenerAuto(id);
+  if (!auto) return res.status(404).json({ error: 'No encontrado' });
+  res.json(auto);
+});
+
+// Subida de fotos del inventario — multer ya configurado arriba con MEDIA_DIR
+const uploadFotosInventario = uploadMedia.array('fotos', 8);
+
+app.post('/api/inventario', (req, res, next) => {
+  uploadFotosInventario(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    next();
+  });
+}, (req, res) => {
+  try {
+    const fotos = (req.files || []).map(f => f.filename);
+    const id = crearAuto({ ...req.body, fotos });
+    res.json({ ok: true, id });
+  } catch (err) {
+    console.error('[Inventario] Error creando:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.patch('/api/inventario/:id', (req, res, next) => {
+  uploadFotosInventario(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    next();
+  });
+}, (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const data = { ...req.body };
+    // Si hay fotos nuevas, las agregamos a las que ya tenia (sin pisar).
+    // Si el frontend manda 'fotos_existentes' como JSON array, esas son las que
+    // se conservan (permite borrar fotos viejas desde la UI).
+    let fotosFinales;
+    let fotosExistentes = [];
+    if (data.fotos_existentes) {
+      try { fotosExistentes = JSON.parse(data.fotos_existentes); }
+      catch (e) { fotosExistentes = []; }
+      delete data.fotos_existentes;
+    } else {
+      const actual = obtenerAuto(id);
+      fotosExistentes = actual ? actual.fotos : [];
+    }
+    const fotosNuevas = (req.files || []).map(f => f.filename);
+    fotosFinales = [...fotosExistentes, ...fotosNuevas];
+    data.fotos = fotosFinales;
+    if (data.disponible !== undefined) data.disponible = data.disponible === 'true' || data.disponible === true;
+    actualizarAuto(id, data);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[Inventario] Error actualizando:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/inventario/:id', (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    eliminarAuto(id);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[Inventario] Error eliminando:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.patch('/api/asignacion/:id/etapa', (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -461,43 +590,8 @@ app.post('/api/conversacion/:telefono/enviar', async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────
-// UPLOAD DE MEDIA DESDE EL DASHBOARD
-// El vendedor adjunta una foto/video y se la mandamos al cliente por su canal.
-// Guardamos el archivo en MEDIA_DIR (ya servido por /media), y le pasamos a
-// Meta la URL pública HTTPS — Meta la baja por su cuenta.
-// ─────────────────────────────────────────────
-const MIME_TIPO = {
-  'image/jpeg': { tipo: 'image', ext: 'jpg' },
-  'image/jpg':  { tipo: 'image', ext: 'jpg' },
-  'image/png':  { tipo: 'image', ext: 'png' },
-  'image/webp': { tipo: 'image', ext: 'webp' },
-  'image/gif':  { tipo: 'image', ext: 'gif' },
-  'video/mp4':  { tipo: 'video', ext: 'mp4' },
-  'video/3gpp': { tipo: 'video', ext: '3gp' },
-  'video/quicktime': { tipo: 'video', ext: 'mov' },
-};
-
-const storageMedia = multer.diskStorage({
-  destination: (req, file, cb) => {
-    if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
-    cb(null, MEDIA_DIR);
-  },
-  filename: (req, file, cb) => {
-    const map = MIME_TIPO[file.mimetype];
-    const ext = map ? map.ext : 'bin';
-    cb(null, `${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`);
-  },
-});
-const uploadMedia = multer({
-  storage: storageMedia,
-  limits: { fileSize: 16 * 1024 * 1024 }, // 16MB — limite de WhatsApp Cloud API para video
-  fileFilter: (req, file, cb) => {
-    if (MIME_TIPO[file.mimetype]) cb(null, true);
-    else cb(new Error(`Tipo de archivo no soportado: ${file.mimetype}`));
-  },
-});
-
+// Endpoint para mandar foto/video al cliente desde el dashboard del vendedor.
+// Sube el archivo a MEDIA_DIR y le pasa a Meta la URL publica HTTPS — Meta la baja.
 app.post('/api/conversacion/:telefono/enviar-media', (req, res, next) => {
   uploadMedia.single('archivo')(req, res, (err) => {
     if (err) {
