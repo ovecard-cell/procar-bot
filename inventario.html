@@ -7,8 +7,11 @@
 <style>
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f0f1a; color: #e8e8f0; margin: 0; }
-  header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; background: #1a1a2e; border-bottom: 1px solid #2a2a3e; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; background: #1a1a2e; border-bottom: 1px solid #2a2a3e; gap: 16px; }
+  header .titulo { display: flex; align-items: center; gap: 16px; }
   header h1 { color: #C9A84C; margin: 0; font-size: 1.2rem; letter-spacing: 0.05em; }
+  .btn-volver { background: #2a2a3e; color: #C9A84C; padding: 8px 14px; border-radius: 6px; text-decoration: none; font-size: 0.85rem; font-weight: 700; border: 1px solid #3a3a4e; transition: background 0.15s; }
+  .btn-volver:hover { background: #3a3a5e; color: #fff; }
   header .links a, header .links button { color: #888; text-decoration: none; margin-left: 16px; font-size: 0.85rem; background: transparent; border: none; cursor: pointer; }
   header .links a:hover, header .links button:hover { color: #C9A84C; }
 
@@ -78,10 +81,12 @@
 <body>
 
 <header>
-  <h1>📦 INVENTARIO</h1>
+  <div class="titulo">
+    <a id="linkVolver" class="btn-volver" href="/admin">← Volver</a>
+    <h1>📦 INVENTARIO</h1>
+  </div>
   <div class="links">
-    <span id="contexto" style="color:#aaa; font-size:0.85rem; margin-right:12px"></span>
-    <a id="linkVolver" href="/admin">← Volver al dashboard</a>
+    <span id="contexto" style="color:#aaa; font-size:0.85rem"></span>
   </div>
 </header>
 
