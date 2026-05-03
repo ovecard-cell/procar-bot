@@ -18,7 +18,9 @@ const {
   obtenerEmbudo, actualizarEtapaAsignacion, ETAPAS_VALIDAS,
   obtenerUltimaAsignacionPorTelefono, avanzarAEnConversacion,
   listarInventario, obtenerAuto, crearAuto, actualizarAuto, eliminarAuto,
+  cambiarEstadoAuto, ESTADOS_AUTO,
 } = require('./database');
+const importador = require('./importador');
 
 const COOKIE_SECRET = process.env.COOKIE_SECRET || 'procar-secret-' + (process.env.ANTHROPIC_API_KEY || 'default').slice(0, 16);
 
@@ -475,6 +477,78 @@ app.delete('/api/inventario/:id', (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[Inventario] Error eliminando:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Cambiar el estado de un auto: disponible / senado / vendido.
+app.patch('/api/inventario/:id/estado', (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { estado } = req.body || {};
+    cambiarEstadoAuto(id, estado);
+    res.json({ ok: true, estado });
+  } catch (err) {
+    console.error('[Inventario] Error cambiando estado:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Importar Excel: subir archivo, devolver preview con nuevos / actualizados / sin cambios / faltantes.
+const uploadExcel = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
+});
+
+app.post('/api/inventario/importar/preview', (req, res, next) => {
+  uploadExcel.single('archivo')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    next();
+  });
+}, (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Falta el archivo Excel' });
+    const items = importador.parsearExcel(req.file.buffer);
+    const cat = importador.categorizar(items);
+    const faltantes = importador.detectarFaltantes(items);
+    res.json({
+      total: items.length,
+      nuevos: cat.nuevos,
+      actualizados: cat.actualizados,
+      sin_cambios: cat.sinCambios.length,
+      faltantes,
+    });
+  } catch (err) {
+    console.error('[Importar] Error en preview:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/inventario/importar/aplicar', express.json({ limit: '5mb' }), (req, res) => {
+  try {
+    const { nuevos, actualizados, marcar_vendidos } = req.body || {};
+    let creados = 0, modificados = 0, vendidos = 0;
+    if (Array.isArray(nuevos)) {
+      for (const item of nuevos) {
+        crearAuto(item);
+        creados++;
+      }
+    }
+    if (Array.isArray(actualizados)) {
+      for (const upd of actualizados) {
+        actualizarAuto(upd.id, upd.item);
+        modificados++;
+      }
+    }
+    if (Array.isArray(marcar_vendidos)) {
+      for (const id of marcar_vendidos) {
+        cambiarEstadoAuto(parseInt(id, 10), 'vendido');
+        vendidos++;
+      }
+    }
+    res.json({ ok: true, creados, modificados, vendidos });
+  } catch (err) {
+    console.error('[Importar] Error aplicando:', err.message);
     res.status(400).json({ error: err.message });
   }
 });

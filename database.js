@@ -138,6 +138,14 @@ function inicializarDB() {
   try { db.exec("ALTER TABLE autos ADD COLUMN tipo TEXT DEFAULT 'auto'"); } catch (e) { /* ya existe */ }
   try { db.exec('ALTER TABLE autos ADD COLUMN link_publi TEXT'); } catch (e) { /* ya existe */ }
   try { db.exec("UPDATE autos SET tipo = 'auto' WHERE tipo IS NULL OR tipo = ''"); } catch (e) { /* ignore */ }
+  // Migración: id_externo (ID del Excel del concesionario) y carrocería (Sedán, SUV, Pick-up, etc).
+  // Tambien estado con 3 valores: 'disponible' | 'senado' | 'vendido' — reemplaza al booleano disponible
+  // (que dejamos sincronizado por compatibilidad: disponible=1 si estado in ('disponible','senado')).
+  try { db.exec('ALTER TABLE autos ADD COLUMN id_externo TEXT'); } catch (e) { /* ya existe */ }
+  try { db.exec('ALTER TABLE autos ADD COLUMN carroceria TEXT'); } catch (e) { /* ya existe */ }
+  try { db.exec("ALTER TABLE autos ADD COLUMN estado TEXT DEFAULT 'disponible'"); } catch (e) { /* ya existe */ }
+  // Backfill: si estado esta null, lo derivamos del booleano disponible
+  try { db.exec("UPDATE autos SET estado = CASE WHEN disponible = 1 THEN 'disponible' ELSE 'vendido' END WHERE estado IS NULL OR estado = ''"); } catch (e) { /* ignore */ }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -363,13 +371,23 @@ function parsearFotos(fila) {
   return { ...fila, fotos };
 }
 
+const ESTADOS_AUTO = ['disponible', 'senado', 'vendido'];
+
+function estadoADisponible(estado) {
+  // disponible y senado se consideran "todavia se ofrece"; vendido NO.
+  return (estado === 'disponible' || estado === 'senado') ? 1 : 0;
+}
+
 function crearAuto(data) {
   const fotosJson = JSON.stringify(data.fotos || []);
+  const estado = ESTADOS_AUTO.includes(data.estado) ? data.estado : (data.disponible === false ? 'vendido' : 'disponible');
   const r = db.prepare(`
-    INSERT INTO autos (tipo, marca, modelo, anio, precio, km, combustible, transmision, color, descripcion, link_publi, fotos, disponible)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO autos (id_externo, tipo, carroceria, marca, modelo, anio, precio, km, combustible, transmision, color, descripcion, link_publi, fotos, estado, disponible)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
+    data.id_externo || null,
     data.tipo || 'auto',
+    data.carroceria || null,
     data.marca,
     data.modelo,
     parseInt(data.anio, 10) || null,
@@ -381,7 +399,8 @@ function crearAuto(data) {
     data.descripcion || null,
     data.link_publi || null,
     fotosJson,
-    data.disponible === false ? 0 : 1
+    estado,
+    estadoADisponible(estado)
   );
   return r.lastInsertRowid;
 }
@@ -390,14 +409,19 @@ function actualizarAuto(id, data) {
   const actual = obtenerAuto(id);
   if (!actual) throw new Error('Auto no encontrado');
   const fotos = data.fotos !== undefined ? data.fotos : actual.fotos;
+  const estado = data.estado !== undefined
+    ? (ESTADOS_AUTO.includes(data.estado) ? data.estado : actual.estado)
+    : (data.disponible !== undefined ? (data.disponible ? 'disponible' : 'vendido') : actual.estado);
   db.prepare(`
     UPDATE autos
-    SET tipo = ?, marca = ?, modelo = ?, anio = ?, precio = ?, km = ?,
+    SET id_externo = ?, tipo = ?, carroceria = ?, marca = ?, modelo = ?, anio = ?, precio = ?, km = ?,
         combustible = ?, transmision = ?, color = ?, descripcion = ?,
-        link_publi = ?, fotos = ?, disponible = ?
+        link_publi = ?, fotos = ?, estado = ?, disponible = ?
     WHERE id = ?
   `).run(
+    data.id_externo ?? actual.id_externo,
     data.tipo ?? actual.tipo,
+    data.carroceria ?? actual.carroceria,
     data.marca ?? actual.marca,
     data.modelo ?? actual.modelo,
     data.anio !== undefined ? (parseInt(data.anio, 10) || null) : actual.anio,
@@ -409,9 +433,21 @@ function actualizarAuto(id, data) {
     data.descripcion ?? actual.descripcion,
     data.link_publi ?? actual.link_publi,
     JSON.stringify(fotos),
-    data.disponible !== undefined ? (data.disponible ? 1 : 0) : actual.disponible,
+    estado,
+    estadoADisponible(estado),
     id
   );
+}
+
+function cambiarEstadoAuto(id, estado) {
+  if (!ESTADOS_AUTO.includes(estado)) throw new Error('Estado invalido: ' + estado);
+  db.prepare('UPDATE autos SET estado = ?, disponible = ? WHERE id = ?').run(estado, estadoADisponible(estado), id);
+}
+
+function obtenerAutoPorIdExterno(idExterno) {
+  if (!idExterno) return null;
+  const fila = db.prepare('SELECT * FROM autos WHERE id_externo = ?').get(String(idExterno));
+  return fila ? parsearFotos(fila) : null;
 }
 
 function eliminarAuto(id) {
@@ -597,9 +633,12 @@ module.exports = {
   ETAPAS_CERRADAS,
   listarInventario,
   obtenerAuto,
+  obtenerAutoPorIdExterno,
   crearAuto,
   actualizarAuto,
+  cambiarEstadoAuto,
   eliminarAuto,
+  ESTADOS_AUTO,
   getSetting,
   setSetting,
   autenticarVendedor,
