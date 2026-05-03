@@ -46,9 +46,19 @@
   .card .estado-pill:hover { filter: brightness(1.15); }
   .card .estado-pill.disponible { background: #2e7d32; color: #fff; }
   .card .estado-pill.senado { background: #f0b500; color: #1a1a2e; }
+  .card .estado-pill.pausado { background: #555; color: #fff; }
   .card .estado-pill.vendido { background: #c62828; color: #fff; }
-  .card.estado-vendido { opacity: 0.5; }
-  .card.estado-senado { opacity: 0.85; }
+  .card.estado-vendido { opacity: 0.45; }
+  .card.estado-senado { opacity: 0.9; }
+  .card.estado-pausado { opacity: 0.55; }
+  /* Switch grande de apagar/prender — el boton principal de cada card */
+  .card .switch-onoff { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 12px; border-radius: 6px; font-weight: 800; font-size: 0.85rem; cursor: pointer; user-select: none; margin-top: 8px; transition: all 0.15s; border: 2px solid transparent; }
+  .card .switch-onoff:hover { filter: brightness(1.1); }
+  .card .switch-onoff.on { background: #2e7d32; color: #fff; }
+  .card .switch-onoff.off { background: #2a2a3e; color: #888; border-color: #444; }
+  .card .switch-onoff .punto { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+  .card .switch-onoff.on .punto { background: #aaffaa; box-shadow: 0 0 8px #aaffaa; }
+  .card .switch-onoff.off .punto { background: #666; }
   .card .acciones { display: flex; gap: 6px; margin-top: 10px; }
   .card .acciones button, .card .acciones a { flex: 1; padding: 6px 8px; border-radius: 4px; font-size: 0.75rem; cursor: pointer; border: none; text-align: center; text-decoration: none; }
   .card .editar { background: #C9A84C; color: #1a1a2e; font-weight: 700; }
@@ -95,10 +105,11 @@
   <button data-tipo="auto">🚗 Autos</button>
   <button data-tipo="moto">🏍️ Motos</button>
   <select id="filtroEstado" class="estado-filtro">
-    <option value="activos">Activos (disp + señados)</option>
+    <option value="activos">Encendidos (disp + señados)</option>
     <option value="">Todos los estados</option>
     <option value="disponible">Solo disponibles</option>
     <option value="senado">Solo señados</option>
+    <option value="pausado">Solo pausados (apagados)</option>
     <option value="vendido">Solo vendidos</option>
   </select>
   <button class="importar" id="btnImportar">📥 Importar Excel</button>
@@ -236,8 +247,10 @@
     renderGrid(items);
   }
 
-  const ESTADO_LABEL = { disponible: '🟢 Disponible', senado: '🟡 Señado', vendido: '🔴 Vendido' };
-  const ESTADO_NEXT = { disponible: 'senado', senado: 'vendido', vendido: 'disponible' };
+  const ESTADO_LABEL = { disponible: '🟢 Disponible', senado: '🟡 Señado', pausado: '⚫ Pausado', vendido: '🔴 Vendido' };
+  const ESTADO_NEXT = { disponible: 'senado', senado: 'pausado', pausado: 'vendido', vendido: 'disponible' };
+  // Auto se considera "encendido" (visible para el bot) si es disponible o senado.
+  const ENCENDIDO = (estado) => estado === 'disponible' || estado === 'senado';
 
   function renderGrid(items) {
     if (!items.length) {
@@ -249,13 +262,14 @@
       const tipoLabel = it.tipo === 'moto' ? '🏍️ Moto' : '🚗 Auto';
       const estado = it.estado || (it.disponible ? 'disponible' : 'vendido');
       const carroceria = it.carroceria ? ` · ${escapar(it.carroceria)}` : '';
+      const encendido = ENCENDIDO(estado);
       return `
         <div class="card estado-${estado}">
           ${fotoUrl
             ? `<img class="foto-principal" src="${fotoUrl}" alt="${escapar(it.marca + ' ' + it.modelo)}" />`
             : `<div class="sin-foto">📷</div>`}
           <div class="info">
-            <span class="estado-pill ${estado}" data-id="${it.id}" data-estado="${estado}" title="Click para cambiar estado">${ESTADO_LABEL[estado] || estado}</span>
+            <span class="estado-pill ${estado}" data-id="${it.id}" data-estado="${estado}" title="Click para cambiar estado fino (disponible/señado/pausado/vendido)">${ESTADO_LABEL[estado] || estado}</span>
             <div class="titulo">${escapar(it.marca)} ${escapar(it.modelo)}</div>
             <div class="subtitulo">${it.anio || '—'}${carroceria} · ${escapar(it.transmision || '—')}</div>
             <div class="precio">${fmtPrecio(it.precio)}</div>
@@ -263,6 +277,10 @@
             <div class="badges">
               <span class="badge tipo-${it.tipo === 'moto' ? 'moto' : 'auto'}">${tipoLabel}</span>
               ${it.id_externo ? `<span class="badge">#${escapar(it.id_externo)}</span>` : ''}
+            </div>
+            <div class="switch-onoff ${encendido ? 'on' : 'off'}" data-id="${it.id}" data-estado="${estado}" title="${encendido ? 'Apagar (Gonzalo deja de ofrecerlo)' : 'Prender (volver a ofrecer)'}">
+              <span class="punto"></span>
+              ${encendido ? 'Encendido — visible al cliente' : 'Apagado — oculto al cliente'}
             </div>
             <div class="acciones">
               <button class="editar" data-id="${it.id}">Editar</button>
@@ -280,15 +298,27 @@
       const id = parseInt(p.dataset.id, 10);
       const actual = p.dataset.estado;
       const siguiente = ESTADO_NEXT[actual] || 'disponible';
-      const res = await fetch(`/api/inventario/${id}/estado`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ estado: siguiente }),
-      });
-      const data = await res.json();
-      if (!data.ok) { alert('Error: ' + (data.error || 'no se pudo cambiar')); return; }
-      cargar();
+      await cambiarEstado(id, siguiente);
     }));
+    grid.querySelectorAll('.switch-onoff').forEach(b => b.addEventListener('click', async () => {
+      const id = parseInt(b.dataset.id, 10);
+      const actual = b.dataset.estado;
+      // ON -> OFF: vamos a 'pausado' (apagado temporal). Si quieren 'vendido' definitivo, usan el pill.
+      // OFF -> ON: volvemos a 'disponible'.
+      const siguiente = ENCENDIDO(actual) ? 'pausado' : 'disponible';
+      await cambiarEstado(id, siguiente);
+    }));
+  }
+
+  async function cambiarEstado(id, estado) {
+    const res = await fetch(`/api/inventario/${id}/estado`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ estado }),
+    });
+    const data = await res.json();
+    if (!data.ok) { alert('Error: ' + (data.error || 'no se pudo cambiar')); return; }
+    cargar();
   }
 
   // Filtros

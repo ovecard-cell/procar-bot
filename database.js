@@ -371,10 +371,17 @@ function parsearFotos(fila) {
   return { ...fila, fotos };
 }
 
-const ESTADOS_AUTO = ['disponible', 'senado', 'vendido'];
+// Estados:
+// - disponible: a la venta, Gonzalo lo ofrece.
+// - senado: cliente dejó seña, no se ofrece a otro pero queda en cartera.
+// - pausado: temporalmente apagado (ej. "estamos terminando una venta"),
+//   Gonzalo no lo ofrece pero NO esta vendido. Es el OFF rapido.
+// - vendido: cerrado, no se ofrece nunca.
+const ESTADOS_AUTO = ['disponible', 'senado', 'pausado', 'vendido'];
 
 function estadoADisponible(estado) {
-  // disponible y senado se consideran "todavia se ofrece"; vendido NO.
+  // Solo 'disponible' y 'senado' cuentan como "todavia se ofrece".
+  // 'pausado' y 'vendido' NO se ofrecen.
   return (estado === 'disponible' || estado === 'senado') ? 1 : 0;
 }
 
