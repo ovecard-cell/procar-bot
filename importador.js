@@ -111,10 +111,19 @@ function parsearExcel(buffer) {
     const id = get(colMap.id);
     const km = get(colMap.km);
     const precio = get(colMap.precio);
-    const noPasar = tieneNoPasar(km, precio, modelo);
+    // "NO PASAR" en un campo (ej KM) significa que NO compartimos ese dato,
+    // pero el auto sigue disponible. Lo guardamos en una nota para que el
+    // vendedor lo vea y para que mas adelante Gonzalo lo respete.
+    const kmNoCompartir = typeof km === 'string' && /no\s*pasar/i.test(km);
+    const precioNoCompartir = typeof precio === 'string' && /no\s*pasar/i.test(precio);
 
-    const estadoCrudo = get(colMap.estado);
-    let estado = noPasar ? 'vendido' : normalizarEstado(estadoCrudo);
+    const estado = normalizarEstado(get(colMap.estado));
+
+    let descripcion = null;
+    const notas = [];
+    if (kmNoCompartir) notas.push('No compartir km con cliente');
+    if (precioNoCompartir) notas.push('No compartir precio con cliente');
+    if (notas.length) descripcion = '⚠️ ' + notas.join(' · ');
 
     items.push({
       id_externo: id != null ? String(id).trim() : null,
@@ -128,7 +137,7 @@ function parsearExcel(buffer) {
       precio: aNumero(precio),
       estado,
       link_publi: (get(colMap.link) || '').toString().trim() || null,
-      _noPasar: noPasar,
+      descripcion,
     });
   }
 
