@@ -67,9 +67,15 @@ async function clasificarConversacion(conv) {
 
   const res = await client.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: 384,
-    system: PROMPT_CLASIFICACION,
-    messages: [{ role: 'user', content: historial }],
+    max_tokens: 256,
+    system: [
+        {
+            type: 'text',
+            text: PROMPT_CLASIFICACION,
+            cache_control: { type: 'ephemeral' }
+        }
+    ],
+    messages: [{ role: 'user', content: historial.slice(-3000) }],
   });
 
   const texto = res.content[0]?.text?.trim() || '';

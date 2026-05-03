@@ -632,8 +632,18 @@ Tu tarea en UNA sola respuesta corta:
   let respuesta = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 512,
-    system: SYSTEM_PROMPT + contextoTemporal() + promptRescate,
-    messages: mensajes,
+    system: [
+        {
+            type: 'text',
+            text: SYSTEM_PROMPT,
+            cache_control: { type: 'ephemeral' }
+        },
+        {
+            type: 'text',
+            text: contextoTemporal() + promptRescate
+        }
+    ],
+    messages: mensajes.slice(-12),
   });
 
   const crudo = respuesta.content
