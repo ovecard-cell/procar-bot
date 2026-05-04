@@ -78,9 +78,14 @@
   .form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus { border-color: #C9A84C; outline: none; }
   .form-grid textarea { resize: vertical; min-height: 60px; }
   .fotos-existentes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-  .fotos-existentes .foto-chip { position: relative; width: 70px; height: 50px; border-radius: 4px; overflow: hidden; background: #0f0f1a; }
-  .fotos-existentes .foto-chip img { width: 100%; height: 100%; object-fit: cover; }
+  .fotos-existentes .foto-chip { position: relative; width: 70px; height: 50px; border-radius: 4px; overflow: hidden; background: #0f0f1a; cursor: grab; transition: transform .12s, opacity .12s, outline .12s; outline: 2px solid transparent; }
+  .fotos-existentes .foto-chip:active { cursor: grabbing; }
+  .fotos-existentes .foto-chip.arrastrando { opacity: .35; }
+  .fotos-existentes .foto-chip.drop-aqui { outline: 2px solid #C9A84C; transform: scale(1.05); }
+  .fotos-existentes .foto-chip img { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
   .fotos-existentes .foto-chip .quitar { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.7); color: #fff; border: none; width: 18px; height: 18px; border-radius: 50%; cursor: pointer; font-size: 0.7rem; line-height: 1; padding: 0; }
+  .fotos-existentes .foto-chip .orden-badge { position: absolute; bottom: 2px; left: 2px; background: rgba(201,168,76,0.9); color: #1a1a2e; font-size: 0.65rem; font-weight: 700; padding: 1px 5px; border-radius: 3px; pointer-events: none; }
+  .fotos-hint { font-size: 0.7rem; color: #888; margin-top: 4px; }
   .modal-card .botones { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
   .modal-card .botones button { padding: 8px 16px; border-radius: 6px; border: none; font-weight: 700; cursor: pointer; font-size: 0.85rem; }
   .modal-card .cancel { background: #2a2a3e; color: #aaa; }
@@ -377,16 +382,62 @@
   function renderFotosExistentes() {
     const cont = document.getElementById('fotosExistentes');
     cont.innerHTML = fotosExistentesEnEdit.map((f, idx) => `
-      <div class="foto-chip">
+      <div class="foto-chip" draggable="true" data-idx="${idx}">
         <img src="/media/${escapar(f)}" />
+        <span class="orden-badge">${idx + 1}</span>
         <button type="button" class="quitar" data-idx="${idx}">×</button>
       </div>
     `).join('');
-    cont.querySelectorAll('.quitar').forEach(b => b.addEventListener('click', () => {
+    // Hint visible si hay 2+ fotos
+    let hint = cont.nextElementSibling;
+    if (!hint || !hint.classList.contains('fotos-hint')) {
+      hint = document.createElement('div');
+      hint.className = 'fotos-hint';
+      cont.parentNode.insertBefore(hint, cont.nextSibling);
+    }
+    hint.textContent = fotosExistentesEnEdit.length > 1
+      ? '↔ Arrastrá las fotos para reordenarlas. La #1 es la portada.'
+      : '';
+
+    cont.querySelectorAll('.quitar').forEach(b => b.addEventListener('click', e => {
+      e.stopPropagation();
       const idx = parseInt(b.dataset.idx, 10);
       fotosExistentesEnEdit.splice(idx, 1);
       renderFotosExistentes();
     }));
+
+    // Drag & drop para reordenar
+    let dragSrcIdx = null;
+    cont.querySelectorAll('.foto-chip').forEach(chip => {
+      chip.addEventListener('dragstart', e => {
+        dragSrcIdx = parseInt(chip.dataset.idx, 10);
+        chip.classList.add('arrastrando');
+        e.dataTransfer.effectAllowed = 'move';
+        // Firefox necesita setData para que arranque el drag
+        try { e.dataTransfer.setData('text/plain', String(dragSrcIdx)); } catch {}
+      });
+      chip.addEventListener('dragend', () => {
+        chip.classList.remove('arrastrando');
+        cont.querySelectorAll('.foto-chip').forEach(c => c.classList.remove('drop-aqui'));
+      });
+      chip.addEventListener('dragover', e => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      });
+      chip.addEventListener('dragenter', () => {
+        if (parseInt(chip.dataset.idx, 10) !== dragSrcIdx) chip.classList.add('drop-aqui');
+      });
+      chip.addEventListener('dragleave', () => chip.classList.remove('drop-aqui'));
+      chip.addEventListener('drop', e => {
+        e.preventDefault();
+        const dstIdx = parseInt(chip.dataset.idx, 10);
+        if (dragSrcIdx === null || dragSrcIdx === dstIdx) return;
+        const [moved] = fotosExistentesEnEdit.splice(dragSrcIdx, 1);
+        fotosExistentesEnEdit.splice(dstIdx, 0, moved);
+        dragSrcIdx = null;
+        renderFotosExistentes();
+      });
+    });
   }
 
   // Submit del form
