@@ -8,17 +8,17 @@ const CADENCIA_GENERAL = [
   {
     tipo: '2h',
     horas: 2,
-    texto: 'Che, ¿pudiste ver lo que te pasé? Cualquier duda decime.',
+    texto: 'Che, ¿pudiste ver lo del auto? Cualquier cosa que quieras saber decime.',
   },
   {
     tipo: '6h',
     horas: 6,
-    texto: 'Si te interesa el auto, podemos ver tema financiación o si tenés algo para entregar en parte de pago. Avisame.',
+    texto: 'Hola! ¿Te quedaste pensando el tema del auto? Si querés podemos arreglar para que lo veas en persona, sin compromiso. Decime y lo coordinamos.',
   },
   {
     tipo: '18h',
     horas: 18,
-    texto: 'Quedo atento por si querés retomar. Acá o por el WhatsApp que te pasé, lo que te quede más cómodo.',
+    texto: 'Quedo atento por si querés retomar 👍',
   },
 ];
 
@@ -98,16 +98,30 @@ async function procesarRecordatorios() {
     const ultimoTipo = ultimoRec?.tipo || null;
 
     // Encontrar el siguiente paso de la cadencia que corresponde según horas y último enviado
-    const siguiente = CADENCIA.find(p =>
-      horasSinRespuesta >= p.horas && (ultimoTipo === null || CADENCIA.findIndex(x => x.tipo === ultimoTipo) < CADENCIA.findIndex(x => x.tipo === p.tipo))
+    // Elegimos cadencia según si ya hubo escalado a vendedor o no.
+    const yaEscalado = !!db.prepare('SELECT 1 FROM asignaciones WHERE cliente_telefono = ? LIMIT 1').get(c.telefono);
+    const cadencia = yaEscalado ? CADENCIA_POST_ESCALADO : CADENCIA_GENERAL;
+
+    const siguiente = cadencia.find(p =>
+      horasSinRespuesta >= p.horas && (ultimoTipo === null || cadencia.findIndex(x => x.tipo === ultimoTipo) < cadencia.findIndex(x => x.tipo === p.tipo))
     );
 
     if (!siguiente) continue;
 
+    let texto = siguiente.texto;
+    if (!texto && siguiente.plantilla) {
+      const vendedor = db.prepare(`
+        SELECT v.nombre FROM asignaciones a
+        JOIN vendedores v ON v.id = a.vendedor_id
+        WHERE a.cliente_telefono = ? ORDER BY a.creado_en DESC LIMIT 1
+      `).get(c.telefono);
+      texto = siguiente.plantilla(vendedor?.nombre);
+    }
+
     try {
-      await enviarRecordatorio(c, siguiente.texto);
+      await enviarRecordatorio(c, texto);
       db.prepare('INSERT INTO conversaciones (telefono, rol, contenido, canal) VALUES (?, ?, ?, ?)')
-        .run(c.telefono, 'assistant', siguiente.texto, c.canal);
+        .run(c.telefono, 'assistant', texto, c.canal);
       const valor = JSON.stringify({ tipo: siguiente.tipo, fecha: new Date().toISOString() });
       db.prepare(`
         INSERT INTO settings (key, value) VALUES (?, ?)
