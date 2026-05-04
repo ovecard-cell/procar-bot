@@ -1,3 +1,5 @@
 node_modules/
 .env
 procar.db
+playwright-profile/
+marketplace-seen.json

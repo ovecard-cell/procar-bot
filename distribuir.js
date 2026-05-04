@@ -22,7 +22,7 @@ async function distribuirLeads(desde) {
   const reporte = [];
 
   for (const lead of calientes) {
-    const vendedor = obtenerVendedorConMenosAsignaciones();
+    const vendedor = obtenerVendedorConMenosAsignaciones(lead.canal);
     if (!vendedor) {
       reporte.push({ cliente: lead.participantes, auto: lead.auto_interes, error: 'No hay vendedores activos' });
       continue;

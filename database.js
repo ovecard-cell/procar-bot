@@ -88,6 +88,7 @@ function inicializarDB() {
   // Migración: agregar tipo y archivo si la tabla ya existía
   try { db.exec("ALTER TABLE conversaciones ADD COLUMN tipo TEXT DEFAULT 'texto'"); } catch (e) { /* ya existe */ }
   try { db.exec("ALTER TABLE conversaciones ADD COLUMN archivo TEXT"); } catch (e) { /* ya existe */ }
+  try { db.exec("ALTER TABLE conversaciones ADD COLUMN canal TEXT DEFAULT 'whatsapp'"); } catch (e) { /* ya existe */ }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS vendedores (
@@ -133,6 +134,20 @@ function inicializarDB() {
   try { db.exec('ALTER TABLE asignaciones ADD COLUMN motivo_perdido TEXT'); } catch (e) { /* ya existe */ }
   // Backfill: cualquier asignacion vieja sin etapa la dejamos como 'nuevo'
   try { db.exec("UPDATE asignaciones SET etapa = 'nuevo' WHERE etapa IS NULL OR etapa = ''"); } catch (e) { /* ignore */ }
+
+  // Historial de cambios de etapa (manual o automatico).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS etapa_historial (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      asignacion_id INTEGER NOT NULL,
+      etapa_anterior TEXT,
+      etapa_nueva TEXT NOT NULL,
+      movido_por TEXT,
+      automatico INTEGER DEFAULT 0,
+      creado_en DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (asignacion_id) REFERENCES asignaciones(id)
+    )
+  `);
 
   // Migración: inventario con tipo (auto/moto) y link a la publi de Marketplace.
   try { db.exec("ALTER TABLE autos ADD COLUMN tipo TEXT DEFAULT 'auto'"); } catch (e) { /* ya existe */ }
@@ -255,10 +270,18 @@ function obtenerVendedores() {
 }
 
 function obtenerVendedorConMenosAsignaciones(canal) {
+  // Marketplace siempre va a Gustavo, ignorando activo/disponible/canales.
+  if (canal === 'marketplace') {
+    const gustavo = db.prepare("SELECT * FROM vendedores WHERE LOWER(nombre) = 'gustavo'").get();
+    if (gustavo) return gustavo;
+    // Si no existe Gustavo, cae al Round-Robin normal.
+  }
+
   // Elegir el vendedor con menos asignaciones pendientes.
   // Preferencia: 1) activo + disponible + maneja el canal,
   //              2) activo + disponible (cualquier canal),
   //              3) activo (aunque no esté disponible — la notificación queda en cola)
+  // Gustavo queda excluido del Round-Robin: solo recibe leads de marketplace.
   const canalNormalizado = (canal === 'messenger' || canal === 'facebook') ? 'facebook' : (canal || '');
   const filtrosCanal = [
     `canales = 'todos'`,
@@ -274,7 +297,7 @@ function obtenerVendedorConMenosAsignaciones(canal) {
     SELECT v.*, COUNT(a.id) as asignaciones_pendientes
     FROM vendedores v
     LEFT JOIN asignaciones a ON v.id = a.vendedor_id AND a.estado = 'pendiente'
-    WHERE v.activo = 1 ${whereExtra}
+    WHERE v.activo = 1 AND LOWER(v.nombre) != 'gustavo' ${whereExtra}
     GROUP BY v.id
     ORDER BY asignaciones_pendientes ASC
     LIMIT 1
@@ -468,11 +491,79 @@ function eliminarAuto(id) {
 
 const ETAPAS_VALIDAS = ['nuevo', 'en_conversacion', 'cotizado', 'visita_acordada', 'vendido', 'perdido'];
 const ETAPAS_CERRADAS = ['vendido', 'perdido'];
+// Ranking lineal — el lead nunca retrocede. 'perdido' es terminal aparte y se permite desde cualquier no-cerrada.
+const ETAPA_RANK = { nuevo: 0, en_conversacion: 1, cotizado: 2, visita_acordada: 3, vendido: 4 };
 
-function actualizarEtapaAsignacion(id, etapa, motivoPerdido) {
+// Etiquetas legibles para mostrar en toasts y UI.
+const ETAPA_LABEL = {
+  nuevo: 'Nuevo',
+  en_conversacion: 'Contactado',
+  cotizado: 'Cotizado',
+  visita_acordada: 'Visita acordada',
+  vendido: 'Venta cerrada',
+  perdido: 'Perdido',
+};
+
+// Reglas de auto-deteccion: keyword (lowercase) → etapa. Se aplica en orden,
+// la primera regla que matchee gana. El orden importa porque algunos textos
+// pueden disparar mas de una (ej: "vendido" + "te esperamos manana").
+const REGLAS_AUTO_ETAPA = [
+  { etapa: 'perdido',         keywords: ['no le interes', 'no tiene presupuesto', 'perdido', 'no avanza', 'se bajo', 'se bajó'] },
+  { etapa: 'vendido',          keywords: ['cerramos', 'vendido', 'trato hecho', 'seña', 'sena', 'reserva'] },
+  { etapa: 'visita_acordada',  keywords: ['pasá', 'pasa ', 'vení', 'veni ', 'te esperamos', 'mañana', 'manana', 'acordamos', 'visita', 'turno'] },
+  { etapa: 'cotizado',         keywords: ['precio', 'valor', 'te sale', 'cuotas', 'financiación', 'financiacion'] },
+];
+
+function detectarEtapaPorTexto(texto) {
+  if (!texto) return null;
+  const t = texto.toLowerCase();
+  for (const regla of REGLAS_AUTO_ETAPA) {
+    if (regla.keywords.some(k => t.includes(k))) return regla.etapa;
+  }
+  return null;
+}
+
+function registrarHistorialEtapa({ asignacion_id, etapa_anterior, etapa_nueva, movido_por, automatico }) {
+  db.prepare(`
+    INSERT INTO etapa_historial (asignacion_id, etapa_anterior, etapa_nueva, movido_por, automatico)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(asignacion_id, etapa_anterior || null, etapa_nueva, movido_por || null, automatico ? 1 : 0);
+}
+
+// Mueve una asignacion a `nuevaEtapa` solo si es un avance valido.
+// Devuelve { movido, etapaAnterior, etapaNueva } — movido=false si ya esta en
+// esa etapa o mas avanzada, o si esta en una etapa cerrada.
+function moverEtapaSiAvanza({ asignacionId, nuevaEtapa, movidoPor, automatico }) {
+  if (!ETAPAS_VALIDAS.includes(nuevaEtapa)) return { movido: false };
+  const asig = db.prepare('SELECT id, etapa FROM asignaciones WHERE id = ?').get(asignacionId);
+  if (!asig) return { movido: false };
+
+  const actual = asig.etapa || 'nuevo';
+  if (actual === nuevaEtapa) return { movido: false, etapaAnterior: actual, etapaNueva: actual };
+  // Si ya esta cerrada (vendido/perdido), no la movemos automaticamente.
+  if (ETAPAS_CERRADAS.includes(actual)) return { movido: false, etapaAnterior: actual, etapaNueva: actual };
+
+  // perdido se permite desde cualquier no-cerrada. Para el resto, exigimos avance lineal.
+  if (nuevaEtapa !== 'perdido') {
+    const rankActual = ETAPA_RANK[actual] ?? 0;
+    const rankNueva  = ETAPA_RANK[nuevaEtapa] ?? 0;
+    if (rankNueva <= rankActual) return { movido: false, etapaAnterior: actual, etapaNueva: actual };
+  }
+
+  const estadoLegacy = ETAPAS_CERRADAS.includes(nuevaEtapa) ? 'cerrado' : 'pendiente';
+  db.prepare(`
+    UPDATE asignaciones SET etapa = ?, estado = ?, actualizado_en = CURRENT_TIMESTAMP WHERE id = ?
+  `).run(nuevaEtapa, estadoLegacy, asignacionId);
+  registrarHistorialEtapa({ asignacion_id: asignacionId, etapa_anterior: actual, etapa_nueva: nuevaEtapa, movido_por: movidoPor, automatico });
+  return { movido: true, etapaAnterior: actual, etapaNueva: nuevaEtapa };
+}
+
+function actualizarEtapaAsignacion(id, etapa, motivoPerdido, movidoPor) {
   if (!ETAPAS_VALIDAS.includes(etapa)) {
     throw new Error(`Etapa invalida: ${etapa}. Validas: ${ETAPAS_VALIDAS.join(', ')}`);
   }
+  const previa = db.prepare('SELECT etapa FROM asignaciones WHERE id = ?').get(id);
+  const etapaAnterior = previa?.etapa || null;
   // Si pasa a 'perdido' guardamos el motivo. Si pasa a otra etapa, lo limpiamos.
   // Tambien sincronizamos 'estado' para mantener compatibilidad con codigo viejo.
   const estadoLegacy = ETAPAS_CERRADAS.includes(etapa) ? 'cerrado' : 'pendiente';
@@ -482,6 +573,9 @@ function actualizarEtapaAsignacion(id, etapa, motivoPerdido) {
     SET etapa = ?, motivo_perdido = ?, estado = ?, actualizado_en = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(etapa, motivo, estadoLegacy, id);
+  if (etapaAnterior !== etapa) {
+    registrarHistorialEtapa({ asignacion_id: id, etapa_anterior: etapaAnterior, etapa_nueva: etapa, movido_por: movidoPor, automatico: false });
+  }
 }
 
 // Mueve a 'en_conversacion' solo si todavia esta en 'nuevo'.
@@ -638,6 +732,9 @@ module.exports = {
   obtenerEmbudo,
   ETAPAS_VALIDAS,
   ETAPAS_CERRADAS,
+  ETAPA_LABEL,
+  detectarEtapaPorTexto,
+  moverEtapaSiAvanza,
   listarInventario,
   obtenerAuto,
   obtenerAutoPorIdExterno,

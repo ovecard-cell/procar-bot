@@ -147,6 +147,10 @@
   </div>
   <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
     <h2 style="font-size:0.85rem; padding:0 0 12px 0; background:transparent; border:none;">👥 ASIGNACIONES POR VENDEDOR</h2>
+    <div id="bulkVendedores" style="display:none; gap:6px; margin-bottom:10px;">
+      <button onclick="bulkVendedores('activar')" style="flex:1; background:#2a9d8f; color:white; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.75rem; font-weight:600;">🟢 Activar todos</button>
+      <button onclick="bulkVendedores('pausar')" style="flex:1; background:#e63946; color:white; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.75rem; font-weight:600;">🔴 Pausar todos</button>
+    </div>
     <div id="statsVendedores">—</div>
   </div>
   <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
@@ -318,6 +322,8 @@
     const res = await fetch('/api/asignaciones');
     const data = await res.json();
     const cont = document.getElementById('statsVendedores');
+    const bulk = document.getElementById('bulkVendedores');
+    if (bulk) bulk.style.display = VENDEDOR ? 'none' : 'flex';
     const v = data.por_vendedor || [];
     cont.innerHTML = v.length > 0
       ? v.map(x => {
@@ -362,10 +368,30 @@
       : '<div style="color:#666;text-align:center;padding:12px">Cuando Gonzalo pase un cliente,<br>aparece acá en vivo</div>';
   }
 
+  function mostrarToast(mensaje) {
+    let cont = document.getElementById('toastContainer');
+    if (!cont) {
+      cont = document.createElement('div');
+      cont.id = 'toastContainer';
+      cont.style.cssText = 'position:fixed; bottom:24px; right:24px; z-index:9999; display:flex; flex-direction:column; gap:8px;';
+      document.body.appendChild(cont);
+    }
+    const el = document.createElement('div');
+    el.style.cssText = 'background:#2a9d8f; color:white; padding:12px 18px; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.25); font-size:0.9rem; font-weight:600; opacity:0; transition:opacity 0.2s;';
+    el.textContent = mensaje;
+    cont.appendChild(el);
+    requestAnimationFrame(() => { el.style.opacity = '1'; });
+    setTimeout(() => {
+      el.style.opacity = '0';
+      setTimeout(() => el.remove(), 250);
+    }, 3500);
+  }
+
   function iconoCanal(c) {
     if (!c) return '';
     if (c.includes('whatsapp')) return '🟢';
     if (c.includes('instagram')) return '📷';
+    if (c.includes('marketplace')) return '🛒';
     if (c.includes('messenger') || c.includes('facebook')) return '💬';
     if (c.includes('demo')) return '🧪';
     return '📨';
@@ -442,7 +468,7 @@
       <div class="conversacion ${convActiva === c.telefono ? 'activa' : ''} ${c.espera ? c.espera.clase : ''}" data-tel="${c.telefono}">
         <div class="top">
           <span class="nombre">${escapar(c.nombre || c.telefono)}${c.espera ? `<span class="esperando-tag ${c.espera.clase}-tag">⏱ ${c.espera.label}</span>` : ''}</span>
-          <span class="canal">${c.canal}</span>
+          <span class="canal">${iconoCanal(c.canal)} ${c.canal === 'marketplace' ? 'Marketplace' : c.canal}</span>
         </div>
         <div class="preview">${escapar(c.preview)}</div>
         <div class="fecha">${formatearFecha(c.ultimo)}${c.vendedor_asignado ? ` · 👤 <strong style="color:#C9A84C">${escapar(c.vendedor_asignado)}</strong>` : ''}</div>
@@ -575,6 +601,14 @@
 
   document.getElementById('btnToggle').addEventListener('click', toggleAgente);
 
+  window.bulkVendedores = async (accion) => {
+    const txt = accion === 'activar' ? 'ACTIVAR a todos los vendedores' : 'PAUSAR a todos los vendedores';
+    if (!confirm(`¿${txt}?`)) return;
+    const r = await fetch('/api/vendedores/' + (accion === 'activar' ? 'activar-todos' : 'pausar-todos'), { method: 'POST' });
+    const data = await r.json();
+    if (data.ok) cargarVendedores(); else alert('Error');
+  };
+
   // Toggle vendedor activo/pausado (solo desde la vista del jefe)
   window.toggleVendedor = async (nombre) => {
     if (!confirm(`¿Cambiar estado de ${nombre}?\n\nSi lo pausás, no va a recibir leads nuevos. Los que ya tiene asignados los conserva.`)) return;
@@ -672,6 +706,7 @@
       if (!data.ok) throw new Error(data.error || 'Error desconocido');
       input.value = '';
       cargarMensajes(convActiva);
+      if (data.etapaAuto) mostrarToast(`Lead movido a ${data.etapaAuto.label} automáticamente`);
     } catch (err) {
       alert('Error mandando: ' + err.message);
     }

@@ -15,8 +15,9 @@ const crypto = require('crypto');
 const {
   inicializarDB, cargarAutosEjemplo, cargarVendedoresEjemplo,
   getSetting, setSetting, autenticarVendedor, cambiarPassword, MEDIA_DIR,
-  obtenerEmbudo, actualizarEtapaAsignacion, ETAPAS_VALIDAS,
+  obtenerEmbudo, actualizarEtapaAsignacion, ETAPAS_VALIDAS, ETAPA_LABEL,
   obtenerUltimaAsignacionPorTelefono, avanzarAEnConversacion,
+  detectarEtapaPorTexto, moverEtapaSiAvanza,
   listarInventario, obtenerAuto, crearAuto, actualizarAuto, eliminarAuto,
   cambiarEstadoAuto, ESTADOS_AUTO,
 } = require('./database');
@@ -556,9 +557,9 @@ app.post('/api/inventario/importar/aplicar', express.json({ limit: '5mb' }), (re
 app.patch('/api/asignacion/:id/etapa', (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const { etapa, motivo_perdido } = req.body || {};
+    const { etapa, motivo_perdido, vendedor } = req.body || {};
     if (!etapa) return res.status(400).json({ error: 'Falta etapa' });
-    actualizarEtapaAsignacion(id, etapa, motivo_perdido);
+    actualizarEtapaAsignacion(id, etapa, motivo_perdido, vendedor || 'manual');
     res.json({ ok: true, etapa });
   } catch (err) {
     console.error('[Etapa] Error:', err.message);
@@ -657,7 +658,25 @@ app.post('/api/conversacion/:telefono/enviar', async (req, res) => {
     const asig = obtenerUltimaAsignacionPorTelefono(telefono);
     if (asig) avanzarAEnConversacion(asig.id);
 
-    res.json({ ok: true, canal });
+    // Auto-deteccion de etapa a partir del texto del vendedor.
+    let etapaAuto = null;
+    if (asig) {
+      const detectada = detectarEtapaPorTexto(texto);
+      if (detectada) {
+        const r = moverEtapaSiAvanza({
+          asignacionId: asig.id,
+          nuevaEtapa: detectada,
+          movidoPor: vendedor || 'dashboard',
+          automatico: true,
+        });
+        if (r.movido) {
+          etapaAuto = { etapa: detectada, label: ETAPA_LABEL[detectada] || detectada };
+          console.log(`[Etapa auto] Asig ${asig.id} ${r.etapaAnterior} → ${detectada} por "${vendedor || 'dashboard'}"`);
+        }
+      }
+    }
+
+    res.json({ ok: true, canal, etapaAuto });
   } catch (err) {
     console.error('[Enviar manual] Error:', err.message);
     res.status(500).json({ error: err.response?.data?.error?.message || err.message });
@@ -1026,6 +1045,20 @@ app.post('/api/vendedor/:nombre/disponibilidad', (req, res) => {
 });
 
 // Activar/pausar un vendedor (no recibe leads nuevos si está pausado)
+app.post('/api/vendedores/activar-todos', (req, res) => {
+  const { db } = require('./database');
+  const r = db.prepare('UPDATE vendedores SET activo = 1').run();
+  console.log(`[Vendedores] Activados todos (${r.changes})`);
+  res.json({ ok: true, afectados: r.changes });
+});
+
+app.post('/api/vendedores/pausar-todos', (req, res) => {
+  const { db } = require('./database');
+  const r = db.prepare('UPDATE vendedores SET activo = 0').run();
+  console.log(`[Vendedores] Pausados todos (${r.changes})`);
+  res.json({ ok: true, afectados: r.changes });
+});
+
 app.post('/api/vendedor/:nombre/toggle', (req, res) => {
   const { db } = require('./database');
   const v = db.prepare('SELECT * FROM vendedores WHERE LOWER(nombre) = LOWER(?)').get(req.params.nombre);
