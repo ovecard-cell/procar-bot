@@ -91,6 +91,17 @@ const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 
 const herramientas = [
   {
+    name: 'buscar_inventario',
+    description: 'Busca autos en el inventario actual de Procar por marca y/o modelo. Usar SIEMPRE antes de afirmar disponibilidad o de mandar fotos. Si devuelve resultados, podés mandar fotos y datos. Si NO devuelve resultados, decile al cliente que ese auto puntual ya no está y escalá al vendedor para que le ofrezca alternativas. NUNCA confirmes disponibilidad sin haber buscado primero.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        marca: { type: 'string', description: 'Marca del auto (ej: Volkswagen, Toyota, Fiat). Opcional.' },
+        modelo: { type: 'string', description: 'Modelo (ej: Gol Trend, Corolla, Cronos). Opcional. Pasá lo que el cliente mencionó, fuzzy match.' },
+      },
+    },
+  },
+  {
     name: 'guardar_lead',
     description: 'Guarda los datos de un cliente interesado en comprar un auto. Usar cuando el cliente da su nombre, CUIL, presupuesto o cuenta qué busca.',
     input_schema: {
@@ -158,6 +169,19 @@ const herramientas = [
 
 async function ejecutarHerramienta(nombre, input, telefono, canal) {
   console.log(`[Agente] Usando herramienta: ${nombre}`, input);
+
+  if (nombre === 'buscar_inventario') {
+    const { buscarAutos } = require('./database');
+    const resultados = buscarAutos({ marca: input.marca, modelo: input.modelo });
+    if (!resultados.length) {
+      return `SIN STOCK: no hay autos disponibles que coincidan con marca="${input.marca || ''}" modelo="${input.modelo || ''}". DECILE AL CLIENTE QUE ESE AUTO PUNTUAL YA NO ESTÁ Y ESCALÁ AL VENDEDOR PARA QUE LE OFREZCA ALTERNATIVAS.`;
+    }
+    const lista = resultados.slice(0, 5).map(a => {
+      const fotos = (a.fotos && a.fotos.length) ? ` — ${a.fotos.length} foto(s)` : '';
+      return `- ${a.marca} ${a.modelo} ${a.anio || ''} (${a.km || '?'} km, ${a.estado || (a.disponible ? 'disponible' : 'no disponible')})${fotos}`;
+    }).join('\n');
+    return `STOCK ENCONTRADO (${resultados.length} resultado/s):\n${lista}\n\nPodés confirmar al cliente que el auto está, mandar fotos si pide, y avanzar la conversación.`;
+  }
 
   if (nombre === 'guardar_lead') {
     const resultado = guardarLead({ ...input, telefono, canal });
@@ -384,27 +408,29 @@ CÓMO RESPONDER:
 
    ⚠️ EXCEPCIÓN B — primer mensaje muy vago en Messenger/Marketplace ("precio??",
    "cuanto sale?", "info?", "hola precio", "esta disponible?"):
-   El cliente NO te dijo qué auto. Esto pasa MUCHO en Messenger porque los
-   anuncios viejos quedan dando vuelta y el cliente respondió a una publicación
-   de hace semanas/meses que ya puede no estar disponible.
+   El cliente NO te dijo qué auto (probable que adjuntara una foto/captura que no
+   te llegó, o respondió a una publicación que vos no podés ver).
 
    NO respondas "¿de qué auto estás viendo el precio?" — eso suena a que no
-   prestaste atención. Tampoco asumas que un auto puntual sigue disponible.
-
-   Hacé esto:
-   1) Reconocé que probablemente vienen de una publicación.
-   2) Pedí foto o el modelo así sabés cuál exactamente.
-   3) Avisá que se publican muchos autos y algunos ya no están — con tono natural,
-      no como excusa.
+   prestaste atención. Reconocé que NO podés ver lo que él está mirando.
 
    Ejemplos:
-      - "Hola José! Mandame la foto de la publicación que viste o decime el modelo,
-         así te confirmo si lo tenemos todavía y te paso info."
-      - "Buenas! Decime cuál era el auto o pasame foto del aviso. Tenemos varios
-         publicados y algunos ya se vendieron, así me aseguro de tirarte algo
-         disponible."
-      - "Hola! Pasame qué publicación viste (o tirame foto), así te tiro info de
-         lo que hay hoy. Nos pasa que se viralizan publicaciones viejas a veces."
+      - "Hola José! No me llega la imagen del auto que estás mirando. Decime el
+         modelo o mandame foto de nuevo y te tiro la info."
+      - "Buenas! No puedo ver desde acá la publi que respondiste. Decime cuál era
+         el auto y te confirmo si lo tenemos."
+
+   ⚠️ EXCEPCIÓN C — cliente menciona un auto puntual ("tenés el Gol Trend?",
+   "precio del Cronos", "el Onix está disponible?"):
+   USÁ SIEMPRE la herramienta buscar_inventario antes de responder. Pasá la marca
+   y/o el modelo que el cliente mencionó.
+   - Si la herramienta devuelve STOCK ENCONTRADO → confirmá que lo tenés, mandá
+     fotos si las hay, y seguí la conversación normal.
+   - Si la herramienta devuelve SIN STOCK → decile al cliente que ese auto puntual
+     ya no está, y escalá al vendedor con escalar_a_vendedor para que le ofrezca
+     alternativas. Ejemplo: "Uy, ese Cronos ya se vendió. Te paso con el vendedor
+     para que te muestre algo parecido que tengamos hoy. ¿Cómo te llamás?"
+   NUNCA confirmes disponibilidad ni mandes fotos sin haber buscado primero.
 
    ⚠️ FRASES PROHIBIDAS (suenan a script y espantan, NUNCA las uses así):
       - "Para confirmarte disponibilidad y todos los datos del Corolla, te paso con el vendedor"
