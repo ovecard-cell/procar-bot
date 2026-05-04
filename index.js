@@ -793,13 +793,28 @@ app.get('/api/conversacion/:telefono', (req, res) => {
   });
 });
 
+// CORS para que el widget funcione embebido en cualquier sitio web.
+app.use((req, res, next) => {
+  if (req.path === '/chat' || req.path === '/widget.js' || req.path === '/widget.html') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+  }
+  next();
+});
+
+app.get('/widget.js', (req, res) => res.sendFile(path.join(__dirname, 'widget.js')));
+app.get('/widget.html', (req, res) => res.sendFile(path.join(__dirname, 'widget.html')));
+
 app.post('/chat', async (req, res) => {
   try {
     const { telefono, mensaje } = req.body;
-    const respuesta = await procesarMensaje(telefono, mensaje, 'demo');
+    const canal = String(telefono || '').startsWith('web_') ? 'web' : 'demo';
+    const respuesta = await procesarMensaje(telefono, mensaje, canal);
     res.json({ respuesta });
   } catch (err) {
-    console.error('[Chat demo] Error:', err.message);
+    console.error('[Chat] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

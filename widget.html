@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Procar - Chat</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; height:100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0f0f1a; color:#fff; }
+  .header { background:#1a1a2e; padding:14px 16px; border-bottom:1px solid #232342; display:flex; align-items:center; gap:10px; }
+  .header .punto { width:10px; height:10px; background:#2a9d8f; border-radius:50%; box-shadow:0 0 8px #2a9d8f; }
+  .header h1 { margin:0; font-size:0.95rem; color:#C9A84C; font-weight:600; }
+  .header .sub { font-size:0.7rem; color:#888; margin-top:2px; }
+  .mensajes { flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:10px; }
+  .msg { max-width:85%; padding:9px 12px; border-radius:14px; font-size:0.88rem; line-height:1.35; word-wrap:break-word; white-space:pre-wrap; }
+  .msg.bot { background:#232342; color:#eee; align-self:flex-start; border-bottom-left-radius:4px; }
+  .msg.user { background:#C9A84C; color:#1a1a2e; align-self:flex-end; border-bottom-right-radius:4px; font-weight:500; }
+  .typing { color:#888; font-size:0.8rem; padding:0 14px; height:18px; font-style:italic; }
+  .compose { display:flex; gap:6px; padding:10px; background:#1a1a2e; border-top:1px solid #232342; }
+  .compose input { flex:1; background:#0f0f1a; border:1px solid #333; color:#fff; padding:10px 12px; border-radius:20px; font-size:0.9rem; outline:none; }
+  .compose input:focus { border-color:#C9A84C; }
+  .compose button { background:#C9A84C; color:#1a1a2e; border:none; padding:10px 16px; border-radius:20px; font-weight:600; cursor:pointer; font-size:0.85rem; }
+  .compose button:disabled { background:#444; color:#888; cursor:not-allowed; }
+  body { display:flex; flex-direction:column; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="punto"></div>
+    <div>
+      <h1>Procar Multimarca</h1>
+      <div class="sub">Te respondemos al toque</div>
+    </div>
+  </div>
+  <div class="mensajes" id="mensajes"></div>
+  <div class="typing" id="typing"></div>
+  <form class="compose" id="form">
+    <input id="inp" type="text" placeholder="Escribí tu consulta..." autocomplete="off" required />
+    <button id="btn" type="submit">Enviar</button>
+  </form>
+
+<script>
+  // Session id único por navegador, persiste en localStorage
+  let sid = localStorage.getItem('procar_widget_sid');
+  if (!sid) {
+    sid = 'web_' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+    localStorage.setItem('procar_widget_sid', sid);
+  }
+
+  const cont = document.getElementById('mensajes');
+  const inp = document.getElementById('inp');
+  const btn = document.getElementById('btn');
+  const typing = document.getElementById('typing');
+
+  function pintar(rol, texto) {
+    const div = document.createElement('div');
+    div.className = 'msg ' + rol;
+    div.textContent = texto;
+    cont.appendChild(div);
+    cont.scrollTop = cont.scrollHeight;
+  }
+
+  // Saludo inicial
+  pintar('bot', '¡Hola! Soy Gonzalo de Procar. Contame qué auto estás buscando o qué necesitás saber.');
+
+  document.getElementById('form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const texto = inp.value.trim();
+    if (!texto) return;
+    pintar('user', texto);
+    inp.value = '';
+    btn.disabled = true;
+    typing.textContent = 'Gonzalo está escribiendo...';
+    try {
+      const r = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ telefono: sid, mensaje: texto }),
+      });
+      const data = await r.json();
+      pintar('bot', data.respuesta || 'Disculpá, hubo un problema. Probá de nuevo.');
+    } catch (err) {
+      pintar('bot', 'Disculpá, no pude conectar. Volvé a intentar en un toque.');
+    }
+    typing.textContent = '';
+    btn.disabled = false;
+    inp.focus();
+  });
+
+  inp.focus();
+</script>
+</body>
+</html>
