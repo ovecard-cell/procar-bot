@@ -134,15 +134,27 @@ async function procesarRecordatorios() {
 
     if (!siguiente) continue;
 
-    let texto = siguiente.texto;
-    if (!texto && siguiente.plantilla) {
-      const vendedor = db.prepare(`
-        SELECT v.nombre FROM asignaciones a
-        JOIN vendedores v ON v.id = a.vendedor_id
-        WHERE a.cliente_telefono = ? ORDER BY a.creado_en DESC LIMIT 1
-      `).get(c.telefono);
-      texto = siguiente.plantilla(vendedor?.nombre);
+    // Buscamos vendedor (si hubo escalado) para pasarle al LLM/plantilla.
+    const vendedorRow = db.prepare(`
+      SELECT v.nombre FROM asignaciones a
+      JOIN vendedores v ON v.id = a.vendedor_id
+      WHERE a.cliente_telefono = ? ORDER BY a.creado_en DESC LIMIT 1
+    `).get(c.telefono);
+    const vendedorNombre = vendedorRow?.nombre || null;
+
+    // Intentamos generar un mensaje contextual con el LLM (lee la conversación).
+    // Si el LLM falla o devuelve vacío, caemos al texto fijo (variante random).
+    let texto = null;
+    try {
+      const { generarRecordatorioContextual } = require('./agente');
+      texto = await generarRecordatorioContextual(c.telefono, siguiente.tipo, vendedorNombre);
+    } catch (err) {
+      console.error(`[Recordatorios] LLM falló para ${c.telefono}, uso fallback:`, err.message);
     }
+    if (!texto) {
+      texto = siguiente.texto || (siguiente.plantilla && siguiente.plantilla(vendedorNombre));
+    }
+    if (!texto) continue;
 
     try {
       await enviarRecordatorio(c, texto);

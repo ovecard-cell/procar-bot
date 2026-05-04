@@ -685,4 +685,47 @@ Tu tarea en UNA sola respuesta corta:
   return sanitizarSaliente(crudo);
 }
 
-module.exports = { procesarMensaje, generarRespuestaRescate, enHorarioVendedores };
+// Genera un recordatorio personalizado leyendo la conversación previa.
+// momento = '2h' | '6h' | '18h' | 'esc_6h' | 'esc_18h'
+async function generarRecordatorioContextual(telefono, momento, vendedorNombre = null) {
+  const historial = obtenerHistorial(telefono);
+  if (!historial.length) return null;
+  const mensajes = historial.map(filaAMensaje);
+
+  // Tono y objetivo distinto según el momento.
+  const guias = {
+    '2h': `Pasaron unas 2 horas desde tu último mensaje al cliente y no respondió. Mandá UN mensaje breve y casual para retomar — leé qué le habías dicho y haceé un follow-up natural a eso. Si le habías hecho una pregunta, recordásela suave. Si quedaron en algo, traelo de vuelta. Si vos le mandaste info y no contestó, preguntá si pudo verlo. Tono: cercano, una sola línea o dos máximo, en minúscula como WhatsApp normal. NO uses "Hola" otra vez (ya hablaron), NO te presentes, NO digas "te recuerdo", NO suenes a script.`,
+    '6h': `Pasaron unas 6 horas. El cliente quizás se distrajo. Mandá UN mensaje que vuelva al ataque pero suave: leé qué venían hablando y empujá la cosa hacia AVANZAR (verlo en persona, mandar fotos, lo que tenga sentido según el contexto). NO menciones precio ni forma de pago. NO digas "Hola" de nuevo. Tono: humano, casual, una o dos líneas, como si le escribieras a un conocido.`,
+    '18h': `Pasaron muchas horas (~18h), probable que ya no responda hoy. Mandá UN mensaje corto de cierre suave que deje la puerta abierta sin presionar. Sin "Hola" ni saludo. Una línea corta.`,
+    'esc_6h': `Pasaron 6h desde que pasaste al cliente con ${vendedorNombre || 'el vendedor'} y no hubo más mensajes. Preguntá natural si pudo hablar con ${vendedorNombre || 'el vendedor'}. Una línea, casual, sin "Hola".`,
+    'esc_18h': `Pasaron 18h desde que pasaste al cliente con ${vendedorNombre || 'el vendedor'}. Preguntá qué le pareció lo que habló o si necesita ajustar algo. Una línea, sin "Hola".`,
+  };
+  const guia = guias[momento];
+  if (!guia) return null;
+
+  const promptRecordatorio = `\n\nSITUACIÓN: ${guia}
+
+REGLAS DURAS:
+- NUNCA digas "te recuerdo" / "te paso a recordar" / "como te decía".
+- NUNCA arranques con "Hola" ni te presentes (ya hablaron antes).
+- NUNCA menciones precio, contado, permuta o financiación.
+- NO uses emojis a menos que el cliente haya usado.
+- Tono argentino casual, en minúscula como mensaje de WhatsApp normal.
+- Máximo 2 líneas. Mejor 1.
+- Tiene que sentirse como vos retomando la charla, no como un sistema.`;
+
+  const respuesta = await client.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 256,
+    system: [
+      { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: contextoTemporal() + promptRecordatorio },
+    ],
+    messages: mensajes.slice(-10),
+  });
+
+  const crudo = respuesta.content.filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  return sanitizarSaliente(crudo) || null;
+}
+
+module.exports = { procesarMensaje, generarRespuestaRescate, generarRecordatorioContextual, enHorarioVendedores };
