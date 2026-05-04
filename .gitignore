@@ -3,3 +3,4 @@ node_modules/
 procar.db
 playwright-profile/
 marketplace-seen.json
+procar.db.backup-*
