@@ -4,21 +4,39 @@ const { db, getSetting } = require('./database');
 // Cadencia de recuperación — todo dentro de la ventana de 24hs de Meta
 // Cada mensaje suma algo nuevo, no repite "te recuerdo"
 // Tenemos dos modos: general (no escalado) y postEscalado (ya hubo vendedor asignado)
+// Cada paso tiene varias variantes — elegimos una random así no suena enlatado.
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
 const CADENCIA_GENERAL = [
   {
     tipo: '2h',
     horas: 2,
-    texto: 'Che, ¿pudiste ver lo del auto? Cualquier cosa que quieras saber decime.',
+    get texto() { return pick([
+      'che, ¿le diste una mirada? cualquier cosa decime',
+      '¿qué te pareció? si querés saber algo puntual decime',
+      'ahí cualquier duda que tengas tirame, sin drama',
+      '¿pudiste ver? si tenés alguna pregunta avisame',
+    ]); },
   },
   {
     tipo: '6h',
     horas: 6,
-    texto: 'Hola! ¿Te quedaste pensando el tema del auto? Si querés podemos arreglar para que lo veas en persona, sin compromiso. Decime y lo coordinamos.',
+    get texto() { return pick([
+      'che, ¿lo pensaste? si querés te lo muestro en el local cuando puedas, así lo ves en vivo',
+      'hola, ¿qué decís del auto? si te queda más cómodo vení a verlo, total el local está abierto',
+      '¿te quedaste pensando? si querés pasá a verlo en persona, ahí terminás de decidir mejor',
+      'si todavía estás interesado, ¿te animás a venir a verlo? así lo charlamos en persona',
+    ]); },
   },
   {
     tipo: '18h',
     horas: 18,
-    texto: 'Quedo atento por si querés retomar 👍',
+    get texto() { return pick([
+      'cualquier cosa estoy por acá ✌️',
+      'si querés retomar avisame, igual te dejo tranqui',
+      'ahí cuando quieras seguimos, sin apuro',
+      'te dejo tranquilo. cualquier cosa estoy 👍',
+    ]); },
   },
 ];
 
@@ -26,12 +44,20 @@ const CADENCIA_POST_ESCALADO = [
   {
     tipo: 'esc_6h',
     horas: 6,
-    plantilla: (vendedor) => `Che, ¿pudo escribirte ${vendedor || 'el vendedor'}? Si todavía no, decime y reviso.`,
+    plantilla: (vendedor) => pick([
+      `che, ¿pudo escribirte ${vendedor || 'el vendedor'}? si no, avisame y le toco la puerta`,
+      `¿${vendedor || 'el vendedor'} ya se comunicó? cualquier cosa decime`,
+      `¿te llegó el mensaje de ${vendedor || 'el vendedor'}? si no, lo apuro`,
+    ]),
   },
   {
     tipo: 'esc_18h',
     horas: 18,
-    plantilla: (vendedor) => `¿Qué te pareció la propuesta de ${vendedor || 'el vendedor'}? Cualquier ajuste que necesites decime, vemos cómo armarlo.`,
+    plantilla: (vendedor) => pick([
+      `¿qué te pareció lo que te pasó ${vendedor || 'el vendedor'}? si hay algo para ajustar, decime y vemos`,
+      `che, ¿pudiste hablar con ${vendedor || 'el vendedor'}? cualquier cosa que quieras revisar avisame`,
+      `¿cómo quedó la cosa con ${vendedor || 'el vendedor'}? si querés ajustar algo decime`,
+    ]),
   },
 ];
 
