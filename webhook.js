@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { procesarMensaje } = require('./agente');
-const { getSetting, MEDIA_DIR, guardarMensaje } = require('./database');
+const { getSetting, setSetting, MEDIA_DIR, guardarMensaje } = require('./database');
 const { limpiarRecordatorios } = require('./recordatorios');
 const config = require('./config');
 
@@ -117,6 +117,47 @@ async function validarToken() {
 // MANEJO COMÚN DE MENSAJES DE INSTAGRAM / MESSENGER
 // (texto + attachments — descarga imágenes, audios, videos)
 // ─────────────────────────────────────────────
+
+// Maneja un mensaje "echo" (eco que Meta nos rebota cuando alguien manda
+// algo desde la página). Si trae nuestra metadata es del propio bot → ignorar.
+// Si NO trae nuestra metadata, lo mandó un humano desde Business Suite →
+// guardar en la conversación como assistant Y pausar al bot, así no se pisan.
+function manejarEcho({ canal, messaging }) {
+  const recipientId = messaging.recipient?.id;
+  const message = messaging.message;
+  const esNuestro = message?.metadata === BOT_METADATA;
+
+  if (esNuestro) {
+    console.log(`[${canal}] Echo del propio bot ignorado`);
+    return;
+  }
+  if (!recipientId) return;
+
+  // Echo de humano desde Business Suite. Lo guardamos en el historial
+  // (rol assistant, así Gonzalo lo ve si vuelve a tomar la conversación más
+  // adelante) y pausamos al bot para esta conversación.
+  const texto = (message?.text || '').trim();
+  if (texto) {
+    try {
+      guardarMensaje({ telefono: recipientId, rol: 'assistant', contenido: texto, canal, tipo: 'texto' });
+    } catch (err) {
+      console.error(`[${canal}] No pude guardar echo humano:`, err.message);
+    }
+  } else if (Array.isArray(message?.attachments) && message.attachments.length) {
+    // Adjuntos mandados a mano (foto, video). Guardamos placeholder así Gonzalo
+    // sabe que el humano mandó algo, aunque no podamos describir qué.
+    try {
+      guardarMensaje({
+        telefono: recipientId, rol: 'assistant',
+        contenido: `[adjunto enviado por vendedor: ${message.attachments[0].type}]`,
+        canal, tipo: 'texto',
+      });
+    } catch (err) { /* noop */ }
+  }
+
+  setSetting(`bot_pausado_${recipientId}`, 'true');
+  console.log(`[${canal}] Humano respondió desde Business Suite → bot PAUSADO para ${recipientId}`);
+}
 
 async function manejarMensajeMeta({ canal, senderId, message, enviar }) {
   // Caso 1: tiene attachments (imágenes / audios / videos / archivos)
@@ -263,9 +304,8 @@ async function recibirMensaje(req, res) {
 
       if (!messaging?.message) return;
 
-      // Ignorar echoes (los mensajes que el bot envió y Meta nos rebota como evento)
       if (messaging.message.is_echo) {
-        console.log('[Instagram] Echo ignorado (mensaje del propio bot)');
+        manejarEcho({ canal: 'instagram', messaging });
         return;
       }
 
@@ -287,9 +327,8 @@ async function recibirMensaje(req, res) {
 
       if (!messaging?.message) return;
 
-      // Ignorar echoes (los mensajes que el bot envió y Meta nos rebota como evento)
       if (messaging.message.is_echo) {
-        console.log('[Messenger] Echo ignorado (mensaje del propio bot)');
+        manejarEcho({ canal: 'messenger', messaging });
         return;
       }
 
@@ -339,12 +378,13 @@ async function enviarWhatsApp(phoneId, destinatario, texto) {
   }
 }
 
+// Marca que ponemos a TODOS los mensajes salientes del bot. Cuando Meta nos
+// rebota un echo, si trae esta metadata sabemos que es nuestro y lo ignoramos.
+// Si NO la trae, es un humano respondiendo desde Business Suite → pausamos el bot.
+const BOT_METADATA = 'procar-bot-v1';
+
 async function enviarInstagram(recipientId, texto) {
-  // Fallback: si no hay INSTAGRAM_ACCESS_TOKEN, usar META_ACCESS_TOKEN (suele
-  // funcionar cuando la cuenta de IG está vinculada a la página de Facebook).
   const token = config.INSTAGRAM_ACCESS_TOKEN || config.META_ACCESS_TOKEN;
-  // Si tenemos token específico de IG, usamos graph.instagram.com.
-  // Sino, usamos graph.facebook.com con el endpoint de la página.
   const url = config.INSTAGRAM_ACCESS_TOKEN
     ? `https://graph.instagram.com/v21.0/me/messages`
     : `https://graph.facebook.com/v19.0/me/messages`;
@@ -352,7 +392,7 @@ async function enviarInstagram(recipientId, texto) {
   try {
     await axios.post(
       url,
-      { recipient: { id: recipientId }, message: { text: texto } },
+      { recipient: { id: recipientId }, message: { text: texto, metadata: BOT_METADATA } },
       { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
     console.log(`[Instagram] Respuesta enviada a ${recipientId}`);
@@ -368,7 +408,7 @@ async function enviarMessenger(recipientId, texto) {
       `https://graph.facebook.com/v19.0/me/messages`,
       {
         recipient: { id: recipientId },
-        message: { text: texto }
+        message: { text: texto, metadata: BOT_METADATA }
       },
       {
         headers: {
