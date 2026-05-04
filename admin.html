@@ -159,6 +159,23 @@
   </div>
 </div>
 
+<div style="padding: 0 24px 16px;">
+  <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
+    <h2 style="font-size:0.85rem; padding:0 0 12px 0; background:transparent; border:none; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <span>🛒 MARKETPLACE (Facebook)</span>
+      <span id="mpEstadoBadge" style="font-size:0.7rem; padding:3px 10px; border-radius:10px; background:#444; color:#ccc;">cargando…</span>
+    </h2>
+    <div id="mpInfo" style="font-size:0.75rem; color:#aaa; margin-bottom:10px;">—</div>
+    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;">
+      <button id="mpBtnIniciar" onclick="mpAccion('iniciar')" style="background:#2a9d8f; color:white; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.75rem; font-weight:600;">▶ Iniciar</button>
+      <button id="mpBtnDetener" onclick="mpAccion('detener')" style="background:#e63946; color:white; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.75rem; font-weight:600;">⏹ Detener</button>
+      <button id="mpBtnTanda" onclick="mpAccion('tanda-ahora')" style="background:#3a6ea5; color:white; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.75rem; font-weight:600;">🔄 Revisar ahora</button>
+      <button id="mpBtnLogin" onclick="mpAccion('login')" style="background:#C9A84C; color:#1a1a2e; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.75rem; font-weight:600;">🔑 Loguearme en Facebook</button>
+    </div>
+    <div id="mpLogs" style="background:#0d0d1a; color:#9fe9a4; padding:10px; border-radius:6px; font-family:monospace; font-size:0.7rem; height:180px; overflow-y:auto; white-space:pre-wrap;">—</div>
+  </div>
+</div>
+
 <div class="layout">
   <div class="panel">
     <h2 style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
@@ -756,6 +773,58 @@
   cargarTodo();
   // Auto-refresh cada 10s
   setInterval(cargarTodo, 10000);
+
+  // === Marketplace ===
+  let mpUltimoLogTs = 0;
+  async function mpRefrescar() {
+    try {
+      const est = await fetch('/api/marketplace/estado').then(r => r.json());
+      const badge = document.getElementById('mpEstadoBadge');
+      if (est.corriendo) {
+        badge.textContent = '● corriendo';
+        badge.style.background = '#2a9d8f'; badge.style.color = 'white';
+      } else if (est.loginAbierto) {
+        badge.textContent = '● login abierto';
+        badge.style.background = '#C9A84C'; badge.style.color = '#1a1a2e';
+      } else {
+        badge.textContent = '○ detenido';
+        badge.style.background = '#444'; badge.style.color = '#ccc';
+      }
+      const fmt = ts => ts ? new Date(ts).toLocaleTimeString() : '—';
+      const enSeg = ts => ts ? Math.max(0, Math.round((ts - Date.now())/1000)) + 's' : '—';
+      document.getElementById('mpInfo').innerHTML =
+        `Sesión FB: <b>${est.logueado ? 'OK' : 'falta loguear'}</b> · ` +
+        `Última tanda: <b>${fmt(est.ultimaTanda)}</b> ` +
+        `(${est.conversacionesUltima} convs, ${est.respondidasUltima} respondidas) · ` +
+        `Próxima en: <b>${enSeg(est.proximaTanda)}</b>` +
+        (est.ultimoError ? ` · <span style="color:#e63946">Error: ${est.ultimoError}</span>` : '');
+
+      const nuevos = await fetch('/api/marketplace/logs?desde=' + mpUltimoLogTs).then(r => r.json());
+      if (nuevos.length) {
+        const cont = document.getElementById('mpLogs');
+        if (cont.textContent === '—') cont.textContent = '';
+        for (const l of nuevos) {
+          const t = new Date(l.ts).toLocaleTimeString();
+          const linea = `[${t}] ${l.msg}\n`;
+          const span = document.createElement('span');
+          span.textContent = linea;
+          if (l.nivel === 'error') span.style.color = '#ff8a8a';
+          cont.appendChild(span);
+          mpUltimoLogTs = l.ts;
+        }
+        cont.scrollTop = cont.scrollHeight;
+      }
+    } catch (err) { /* silencio */ }
+  }
+  async function mpAccion(accion) {
+    try {
+      const r = await fetch('/api/marketplace/' + accion, { method: 'POST' }).then(r => r.json());
+      if (!r.ok && r.msg) alert(r.msg);
+      mpRefrescar();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+  mpRefrescar();
+  setInterval(mpRefrescar, 3000);
 </script>
 
 </body>

@@ -1097,6 +1097,70 @@ app.get('/agente/activar', (req, res) => {
 });
 
 // Webhook de Meta (WhatsApp + Instagram + Messenger)
+// === Marketplace: bridge entre la PC de la agencia (scraper local) y Railway ===
+// La PC agencia corre marketplace-scraper.js, lee FB, y le manda cada mensaje a este
+// endpoint. Acá procesamos con Gonzalo y guardamos en la DB. La PC luego escribe la
+// respuesta en Facebook. Así las conversaciones de Marketplace quedan visibles en
+// /admin junto a WhatsApp e Instagram.
+
+const MARKETPLACE_SECRET = process.env.MARKETPLACE_SECRET || 'cambia-esto-en-railway';
+const mpEstadoRemoto = {
+  ultimoHeartbeat: null,
+  estado: null,   // lo que reporta el scraper local
+  logs: [],       // anillo de los últimos 200 logs recibidos
+};
+
+function chequearSecret(req, res) {
+  if ((req.body && req.body.secret) !== MARKETPLACE_SECRET) {
+    res.status(401).json({ error: 'secret inválido' });
+    return false;
+  }
+  return true;
+}
+
+// El scraper local nos pasa un mensaje recién leído de FB y le devolvemos la respuesta.
+app.post('/api/marketplace/procesar', async (req, res) => {
+  if (!chequearSecret(req, res)) return;
+  const { senderId, texto } = req.body || {};
+  if (!senderId || !texto) return res.status(400).json({ error: 'falta senderId o texto' });
+  try {
+    const respuesta = await procesarMensaje(senderId, texto, 'marketplace');
+    res.json({ ok: true, respuesta });
+  } catch (err) {
+    console.error('[Marketplace bridge] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// El scraper local pinguea cada 30s con su estado y logs nuevos.
+app.post('/api/marketplace/heartbeat', (req, res) => {
+  if (!chequearSecret(req, res)) return;
+  const { estado, logsNuevos } = req.body || {};
+  mpEstadoRemoto.ultimoHeartbeat = Date.now();
+  if (estado) mpEstadoRemoto.estado = estado;
+  if (Array.isArray(logsNuevos)) {
+    for (const l of logsNuevos) mpEstadoRemoto.logs.push(l);
+    while (mpEstadoRemoto.logs.length > 200) mpEstadoRemoto.logs.shift();
+  }
+  res.json({ ok: true });
+});
+
+// El admin panel consulta esto para mostrar estado del scraper remoto.
+app.get('/api/marketplace/estado', (req, res) => {
+  const conectado = mpEstadoRemoto.ultimoHeartbeat &&
+    (Date.now() - mpEstadoRemoto.ultimoHeartbeat) < 90 * 1000;
+  res.json({
+    modoRemoto: true,
+    conectado,
+    ultimoHeartbeat: mpEstadoRemoto.ultimoHeartbeat,
+    ...(mpEstadoRemoto.estado || {}),
+  });
+});
+app.get('/api/marketplace/logs', (req, res) => {
+  const desde = parseInt(req.query.desde) || 0;
+  res.json(mpEstadoRemoto.logs.filter(l => l.ts > desde));
+});
+
 app.get('/webhook', verificarWebhook);
 app.post('/webhook', recibirMensaje);
 
