@@ -982,6 +982,32 @@ app.post('/api/test-whatsapp', async (req, res) => {
   }
 });
 
+// Test del template lead_asignado (el que se manda a vendedores).
+// Devuelve el error exacto de Meta si falla.
+app.get('/api/test-template-lead', async (req, res) => {
+  const numero = req.query.numero;
+  if (!numero) return res.status(400).json({ error: 'falta ?numero=549...' });
+  try {
+    const { enviarLeadAsignado } = require('./mensajero');
+    await enviarLeadAsignado(numero, {
+      cliente: 'Cliente de prueba',
+      vehiculo: 'Gol Trend',
+      consulta: 'TEST - prueba de plantilla lead_asignado',
+    });
+    res.json({ ok: true, mensaje: `Plantilla enviada a ${numero}. Revisá tu WhatsApp.` });
+  } catch (err) {
+    const meta = err.response?.data?.error;
+    res.status(500).json({
+      ok: false,
+      error_meta: meta?.message || err.message,
+      codigo: meta?.code,
+      tipo: meta?.type,
+      detalles: meta?.error_data,
+      hint_meta: meta?.error_user_msg,
+    });
+  }
+});
+
 // Cambiar canales que maneja un vendedor
 // Body: { canales: 'redes' | 'whatsapp' | 'todos' | 'facebook,instagram' }
 app.post('/api/vendedor/:nombre/canales', (req, res) => {
