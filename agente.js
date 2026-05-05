@@ -666,25 +666,22 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
     messages: mensajes
   });
 
-  // Bucle: si Claude quiere usar herramientas, ejecutarlas y continuar
-  while (respuesta.stop_reason === 'tool_use') {
-    const usoHerramienta = respuesta.content.find(b => b.type === 'tool_use');
-    const resultadoHerramienta = await ejecutarHerramienta(
-      usoHerramienta.name,
-      usoHerramienta.input,
-      telefono,
-      canal
-    );
+  // Bucle: si Claude quiere usar herramientas, ejecutarlas y continuar.
+  // OJO: Claude puede devolver VARIAS tool_use en una sola respuesta (ej. cuando
+  // el cliente pregunta por varios autos juntos). Tenemos que ejecutar TODAS y
+  // mandar todos los tool_result en el siguiente turno, sino el modelo se traba
+  // con tool_use_ids huérfanos y no responde nunca.
+  let iteraciones = 0;
+  while (respuesta.stop_reason === 'tool_use' && iteraciones++ < 8) {
+    const usosHerramienta = respuesta.content.filter(b => b.type === 'tool_use');
+    const resultados = [];
+    for (const uso of usosHerramienta) {
+      const r = await ejecutarHerramienta(uso.name, uso.input, telefono, canal);
+      resultados.push({ type: 'tool_result', tool_use_id: uso.id, content: r });
+    }
 
     mensajes.push({ role: 'assistant', content: respuesta.content });
-    mensajes.push({
-      role: 'user',
-      content: [{
-        type: 'tool_result',
-        tool_use_id: usoHerramienta.id,
-        content: resultadoHerramienta
-      }]
-    });
+    mensajes.push({ role: 'user', content: resultados });
 
     respuesta = await client.messages.create({
       model: 'claude-sonnet-4-6',
