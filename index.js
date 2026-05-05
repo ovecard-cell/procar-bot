@@ -872,6 +872,24 @@ app.get('/api/conversacion/:telefono', (req, res) => {
     ORDER BY a.creado_en ASC
   `).all(req.params.telefono);
   const botPausado = getSetting(`bot_pausado_${req.params.telefono}`, 'false') === 'true';
+
+  // Ventana de 24hs de Meta: si el último mensaje del cliente fue hace +24h,
+  // ya no se puede mandar texto libre (solo plantillas pre-aprobadas).
+  const ultimoUser = db.prepare(`
+    SELECT creado_en FROM conversaciones
+    WHERE telefono = ? AND rol = 'user'
+    ORDER BY creado_en DESC LIMIT 1
+  `).get(req.params.telefono);
+  let ventana24h = { abierta: true };
+  if (ultimoUser) {
+    const horas = (Date.now() - new Date(ultimoUser.creado_en).getTime()) / (60 * 60 * 1000);
+    ventana24h = {
+      abierta: horas < 24,
+      horas: Math.floor(horas),
+      ultimo_msg_cliente: ultimoUser.creado_en,
+    };
+  }
+
   res.json({
     nombre: cliente?.nombre,
     cuil: cliente?.cuil,
@@ -880,6 +898,7 @@ app.get('/api/conversacion/:telefono', (req, res) => {
     mensajes: normalizarTimestamps(mensajes, ['creado_en']),
     asignaciones: normalizarTimestamps(asignaciones, ['creado_en']),
     bot_pausado: botPausado,
+    ventana24h,
   });
 });
 

@@ -538,6 +538,28 @@
     }
     document.getElementById('compose').style.display = 'flex';
 
+    // Banner de ventana 24hs de Meta cerrada.
+    const composeEl = document.getElementById('compose');
+    let bannerVentana = document.getElementById('bannerVentana24h');
+    if (data.ventana24h && !data.ventana24h.abierta) {
+      if (!bannerVentana) {
+        bannerVentana = document.createElement('div');
+        bannerVentana.id = 'bannerVentana24h';
+        bannerVentana.style.cssText = 'background:#3a1a1f; color:#ff8a8a; padding:10px 14px; border-left:4px solid #e63946; border-radius:6px; font-size:0.82rem; margin:8px 0; line-height:1.4;';
+        composeEl.parentNode.insertBefore(bannerVentana, composeEl);
+      }
+      const horas = data.ventana24h.horas;
+      const dias = horas >= 24 ? `(${Math.floor(horas/24)}d ${horas%24}h)` : `(${horas}h)`;
+      bannerVentana.innerHTML = `⛔ <b>Meta cerró la ventana de mensaje libre</b> — el cliente no escribe hace ${horas}h ${dias}.<br>Si le mandás texto desde acá, Meta va a rechazarlo. Llamá al cliente o esperá a que escriba primero.`;
+      // Deshabilitar el botón de enviar
+      const btnEnv = document.getElementById('btnEnviar');
+      if (btnEnv) { btnEnv.disabled = true; btnEnv.style.opacity = '0.4'; btnEnv.style.cursor = 'not-allowed'; }
+    } else {
+      if (bannerVentana) bannerVentana.remove();
+      const btnEnv = document.getElementById('btnEnviar');
+      if (btnEnv) { btnEnv.disabled = false; btnEnv.style.opacity = ''; btnEnv.style.cursor = ''; }
+    }
+
     if (!data.mensajes || data.mensajes.length === 0) {
       cont.innerHTML = '<div class="selecciona">No hay mensajes</div>';
       return;
