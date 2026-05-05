@@ -92,12 +92,12 @@ const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 const herramientas = [
   {
     name: 'buscar_inventario',
-    description: 'Busca autos en el inventario actual de Procar por marca y/o modelo. Usar SIEMPRE antes de afirmar disponibilidad o de mandar fotos. Si devuelve resultados, podés mandar fotos y datos. Si NO devuelve resultados, decile al cliente que ese auto puntual ya no está y escalá al vendedor para que le ofrezca alternativas. NUNCA confirmes disponibilidad sin haber buscado primero.',
+    description: 'Busca autos en el inventario actual de Procar por marca y/o modelo. Usar SIEMPRE antes de afirmar disponibilidad o de mandar fotos. IMPORTANTE: pasá SOLO el nombre del modelo SIN año, SIN versión, SIN trim, SIN km. La búsqueda hace LIKE %modelo%, así que pasar "Amarok 2017" no matchea con "Amarok 4X2 2.0L TDI". Si el cliente quiere un año/versión específico, primero buscás por modelo solo, después VOS comparás los resultados con lo que pidió. Si encontrás autos parecidos pero no exactos lo que pidió, ofrecele lo que sí hay (no digas que no tenés nada).',
     input_schema: {
       type: 'object',
       properties: {
         marca: { type: 'string', description: 'Marca del auto (ej: Volkswagen, Toyota, Fiat). Opcional.' },
-        modelo: { type: 'string', description: 'Modelo (ej: Gol Trend, Corolla, Cronos). Opcional. Pasá lo que el cliente mencionó, fuzzy match.' },
+        modelo: { type: 'string', description: 'SOLO el nombre base del modelo, SIN año, SIN versión, SIN km. Ej: "Amarok" (NO "Amarok 2017"), "Gol Trend" (NO "Gol Trend 2018 80mil"), "Corolla" (NO "Corolla XEI 2024"). El año/versión los chequeás vos en los resultados.' },
       },
     },
   },
@@ -493,16 +493,22 @@ CÓMO RESPONDER:
    modelo/foto que NO te llegó.
 
    ⚠️ EXCEPCIÓN C — cliente menciona un auto puntual ("tenés el Gol Trend?",
-   "precio del Cronos", "el Onix está disponible?"):
-   USÁ SIEMPRE la herramienta buscar_inventario antes de responder. Pasá la marca
-   y/o el modelo que el cliente mencionó.
-   - Si la herramienta devuelve STOCK ENCONTRADO → confirmá que lo tenés, mandá
-     fotos si las hay, y seguí la conversación normal.
-   - Si la herramienta devuelve SIN STOCK → decile al cliente que ese auto puntual
-     ya no está, y escalá al vendedor con escalar_a_vendedor para que le ofrezca
-     alternativas. Ejemplo: "Uy, ese Cronos ya se vendió. Te paso con el vendedor
-     para que te muestre algo parecido que tengamos hoy. ¿Cómo te llamás?"
+   "precio del Cronos", "el Onix está disponible?", "la Amarok 2017"):
+   USÁ SIEMPRE la herramienta buscar_inventario antes de responder. Pasá SOLO el
+   modelo base sin año/versión (ej: pasá "Amarok", NO "Amarok 2017").
+
+   Después analizá los resultados:
+   - Si hay STOCK con el año/versión exacto que pidió → confirmá ese, mandá fotos.
+   - Si hay STOCK pero de OTRO año/versión (ej: pidió Amarok 2017, hay Amarok 2023)
+      → ofrecele el que SÍ tenés con tono natural, NO digas que "no hay" cuando hay
+      algo parecido. Ejemplo: "Esa puntual ya no está, pero tengo una Amarok 2023
+      Trendline impecable. Te paso fotos."
+   - Si SIN STOCK → ahí sí decile que no tenés ese modelo y escalá al vendedor para
+      alternativas. Ejemplo: "Uy, ese modelo ya no está. Te paso con el vendedor
+      para que te muestre algo parecido. ¿Cómo te llamás?"
+
    NUNCA confirmes disponibilidad ni mandes fotos sin haber buscado primero.
+   NUNCA digas "no tenés" si encontraste algo del mismo modelo aunque sea otro año.
 
    ⚠️⚠️ SUPER IMPORTANTE — distinguir "PREGUNTA POR UN AUTO NUESTRO" vs
    "ME OFRECE SU AUTO EN PERMUTA":
