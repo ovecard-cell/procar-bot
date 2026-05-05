@@ -116,6 +116,10 @@ async function procesarRecordatorios() {
   for (const c of candidatos) {
     if (c.ultimo_rol !== 'assistant') continue;
 
+    // Si el bot está PAUSADO para esta conversación (vendedor humano la tomó),
+    // NO mandamos recordatorio. Sino el bot pisa lo que el vendedor escribió a mano.
+    if (getSetting(`bot_pausado_${c.telefono}`, 'false') === 'true') continue;
+
     const horasSinRespuesta = (ahora - new Date(c.ultimo_msg).getTime()) / HORA;
     // Después de 23hs ya no mandamos nada (ventana de 24hs de Meta)
     if (horasSinRespuesta >= 23) continue;
