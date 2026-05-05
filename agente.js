@@ -927,7 +927,17 @@ async function generarRecordatorioContextual(telefono, momento, vendedorNombre =
 REGLAS DURAS:
 - NUNCA digas "te recuerdo" / "te paso a recordar" / "como te decía".
 - NUNCA arranques con "Hola" ni te presentes (ya hablaron antes).
+- NUNCA arranques con "che" — suena de viejo / acosador en este contexto.
 - NUNCA menciones precio, contado, permuta o financiación.
+- NUNCA preguntes "¿le diste una mirada?" / "¿pudiste verlo?" / "¿qué te pareció?"
+   SI NO LE MANDASTE NADA para mirar (ni fotos, ni info concreta del auto, ni link).
+   Antes de redactar, MIRÁ tu último mensaje: si solo le diste la dirección del local,
+   o le hiciste una pregunta general, NO digas "le diste una mirada".
+- Tu mensaje tiene que retomar EXACTAMENTE el último intercambio:
+   * Si vos le hiciste una pregunta y no contestó → repetir esa pregunta natural.
+   * Si quedó pendiente coordinar (visita, fotos, info) → empujar eso.
+   * Si vos le diste info y no respondió → preguntar si le sirve.
+   * Si le ofreciste algo concreto → preguntar si va por ese camino.
 - NO uses emojis a menos que el cliente haya usado.
 - Tono argentino casual, en minúscula como mensaje de WhatsApp normal.
 - Máximo 2 líneas. Mejor 1.

@@ -12,20 +12,18 @@ const CADENCIA_GENERAL = [
     tipo: '2h',
     horas: 2,
     get texto() { return pick([
-      'che, ¿le diste una mirada? cualquier cosa decime',
-      '¿qué te pareció? si querés saber algo puntual decime',
-      'ahí cualquier duda que tengas tirame, sin drama',
-      '¿pudiste ver? si tenés alguna pregunta avisame',
+      'cualquier duda que tengas tirame, sin drama',
+      '¿alguna pregunta puntual? avisame',
+      'ahí cuando quieras avanzar decime',
     ]); },
   },
   {
     tipo: '6h',
     horas: 6,
     get texto() { return pick([
-      'che, ¿lo pensaste? si querés te lo muestro en el local cuando puedas, así lo ves en vivo',
-      'hola, ¿qué decís del auto? si te queda más cómodo vení a verlo, total el local está abierto',
-      '¿te quedaste pensando? si querés pasá a verlo en persona, ahí terminás de decidir mejor',
-      'si todavía estás interesado, ¿te animás a venir a verlo? así lo charlamos en persona',
+      '¿te quedó alguna duda? si querés pasá a verlo en persona, ahí terminás de decidir mejor',
+      'si querés vení a verlo cuando puedas, el local está abierto',
+      '¿te animás a venir a verlo? así lo charlamos en persona',
     ]); },
   },
   {
