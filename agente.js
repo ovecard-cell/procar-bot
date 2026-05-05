@@ -451,6 +451,24 @@ CÓMO RESPONDER:
 
    Cuando te diga el nombre, usá escalar_a_vendedor.
 
+   ⚠️ REGLAS DURAS DE ESCALADO — la respuesta cuando vas a derivar TIENE QUE SER CORTA:
+   - MÁXIMO 1 línea para anunciar que pasás + 1 línea para pedir el nombre.
+   - NUNCA pidas disculpas largas ("perdón, me confundí antes...").
+   - NUNCA repitas datos del auto que ya mencionaste (km, año, modelo).
+   - NUNCA expliques POR QUÉ lo pasás al vendedor ("para que te tire el número y
+      cualquier otra consulta") — el cliente ya sabe para qué.
+   - NUNCA agregues "te puede ayudar con cualquier otra cosa" o frases de relleno.
+
+   ❌ MAL (verborrágico):
+      "Perdón, me confundí antes — el 2024 sí está disponible. Tiene 21.000 km.
+       El precio exacto te lo confirma el vendedor, pero si querés te paso con él
+       para que te tire el número y cualquier otra consulta. ¿Cómo te llamás?"
+
+   ✅ BIEN (directo):
+      "Te paso con el vendedor que te tira el precio. ¿Cómo te llamás?"
+   ✅ BIEN:
+      "Dale, lo derivo al vendedor para que te confirme. ¿Cómo te llamás?"
+
 3. Pregunta por horarios, dirección o "de dónde son":
    Respondé corto y conversacional, NUNCA arranques con "Hola" si ya hubo
    saludo previo, NUNCA tires la frase formal completa "Somos Procar Multimarca,
@@ -655,6 +673,25 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
     return null;
   }
 
+  // Defensa anti-pisada: si el último timestamp de mensaje 'assistant' que mandó
+  // el bot no coincide con el último 'assistant' de la DB, significa que un humano
+  // (vendedor desde Business Suite o app) escribió mientras procesábamos. Pausamos
+  // y NO respondemos para no pisar lo que dijo el humano.
+  try {
+    const { db } = require('./database');
+    const ultimoAssistant = db.prepare(
+      "SELECT creado_en FROM conversaciones WHERE telefono = ? AND rol = 'assistant' ORDER BY id DESC LIMIT 1"
+    ).get(telefono);
+    const ultimoBot = getSetting(`ultimo_msg_bot_${telefono}`, '');
+    if (ultimoAssistant && ultimoBot && ultimoAssistant.creado_en !== ultimoBot) {
+      console.log(`[Agente] Detectado mensaje humano (assistant DB=${ultimoAssistant.creado_en}, bot=${ultimoBot}) — pauso y no respondo`);
+      setSettingSafe(`bot_pausado_${telefono}`, 'true');
+      return null;
+    }
+  } catch (err) {
+    console.error('[Agente] Defensa anti-pisada falló:', err.message);
+  }
+
   const historial = obtenerHistorial(telefono);
   const mensajes = historial.map(filaAMensaje);
 
@@ -699,8 +736,21 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
   const textoRespuesta = sanitizarSaliente(textoCrudo);
 
   guardarMensaje({ telefono, rol: 'assistant', contenido: textoRespuesta, canal });
+  // Registramos el timestamp para que el siguiente turno pueda detectar si un
+  // humano escribió mientras procesábamos.
+  try {
+    const { db } = require('./database');
+    const ultimo = db.prepare(
+      "SELECT creado_en FROM conversaciones WHERE telefono = ? AND rol = 'assistant' ORDER BY id DESC LIMIT 1"
+    ).get(telefono);
+    if (ultimo) setSettingSafe(`ultimo_msg_bot_${telefono}`, ultimo.creado_en);
+  } catch { /* noop */ }
 
   return textoRespuesta;
+}
+
+function setSettingSafe(key, value) {
+  try { require('./database').setSetting(key, value); } catch { /* noop */ }
 }
 
 // ─────────────────────────────────────────────
