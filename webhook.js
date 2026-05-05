@@ -122,6 +122,26 @@ async function validarToken() {
 // algo desde la página). Si trae nuestra metadata es del propio bot → ignorar.
 // Si NO trae nuestra metadata, lo mandó un humano desde Business Suite →
 // guardar en la conversación como assistant Y pausar al bot, así no se pisan.
+// Extrae el texto/titulo más útil de un attachment de Messenger. Los anuncios
+// suelen mandar templates generic con title/subtitle (ej: "PEUGEOT 208 L/20 2021"),
+// o imágenes con caption. Probamos en varios lados según la estructura.
+function extraerTextoAttachment(att) {
+  if (!att) return null;
+  const p = att.payload || {};
+  // Template generic: payload.elements[0].title / .subtitle
+  if (Array.isArray(p.elements) && p.elements.length) {
+    const e = p.elements[0];
+    const partes = [e.title, e.subtitle].filter(Boolean);
+    if (partes.length) return partes.join(' — ');
+  }
+  // Algunos templates: payload.title / payload.text
+  if (p.title) return p.title;
+  if (p.text) return p.text;
+  // Fallback: tipo + url
+  if (att.type) return null;
+  return null;
+}
+
 function manejarEcho({ canal, messaging }) {
   const recipientId = messaging.recipient?.id;
   const message = messaging.message;
@@ -133,9 +153,8 @@ function manejarEcho({ canal, messaging }) {
   }
   if (!recipientId) return;
 
-  // Echo de humano desde Business Suite. Lo guardamos en el historial
-  // (rol assistant, así Gonzalo lo ve si vuelve a tomar la conversación más
-  // adelante) y pausamos al bot para esta conversación.
+  // Echo de humano desde Business Suite o saludo automático del anuncio. Lo
+  // guardamos en el historial (rol assistant) así Gonzalo lo ve de contexto.
   const texto = (message?.text || '').trim();
   if (texto) {
     try {
@@ -143,16 +162,34 @@ function manejarEcho({ canal, messaging }) {
     } catch (err) {
       console.error(`[${canal}] No pude guardar echo humano:`, err.message);
     }
-  } else if (Array.isArray(message?.attachments) && message.attachments.length) {
-    // Adjuntos mandados a mano (foto, video). Guardamos placeholder así Gonzalo
-    // sabe que el humano mandó algo, aunque no podamos describir qué.
-    try {
-      guardarMensaje({
-        telefono: recipientId, rol: 'assistant',
-        contenido: `[adjunto enviado por vendedor: ${message.attachments[0].type}]`,
-        canal, tipo: 'texto',
-      });
-    } catch (err) { /* noop */ }
+  }
+
+  // Adjuntos: muchos anuncios mandan un template/imagen con el modelo del auto
+  // como título. Extraemos eso para que Gonzalo lo vea como contexto.
+  if (Array.isArray(message?.attachments) && message.attachments.length) {
+    for (const att of message.attachments) {
+      const txt = extraerTextoAttachment(att);
+      if (txt) {
+        try {
+          guardarMensaje({
+            telefono: recipientId, rol: 'assistant',
+            contenido: `[publicación: ${txt}]`,
+            canal, tipo: 'texto',
+          });
+          console.log(`[${canal}] Capturé contexto de attachment: "${txt}"`);
+        } catch { /* noop */ }
+      } else if (!texto) {
+        // Si no había texto y no pudimos extraer del attachment, dejamos
+        // un placeholder para que Gonzalo sepa que algo se mandó.
+        try {
+          guardarMensaje({
+            telefono: recipientId, rol: 'assistant',
+            contenido: `[adjunto: ${att.type}]`,
+            canal, tipo: 'texto',
+          });
+        } catch { /* noop */ }
+      }
+    }
   }
 
   // Solo pausamos el bot si el cliente YA escribió antes. Caso contrario el
@@ -342,7 +379,30 @@ async function recibirMensaje(req, res) {
       const entry    = body.entry?.[0];
       const messaging = entry?.messaging?.[0];
 
-      if (!messaging?.message) return;
+      if (!messaging) return;
+
+      // Capturar referral del anuncio (puede venir solo, sin mensaje, cuando el
+      // cliente abre el chat desde un click-to-Messenger ad).
+      const ref = messaging.referral || messaging.message?.referral;
+      if (ref) {
+        const senderRef = messaging.sender?.id;
+        if (senderRef) {
+          const partes = [];
+          if (ref.ad_id) partes.push(`ad_id=${ref.ad_id}`);
+          if (ref.ref) partes.push(`ref=${ref.ref}`);
+          if (ref.source) partes.push(`source=${ref.source}`);
+          try {
+            guardarMensaje({
+              telefono: senderRef, rol: 'assistant',
+              contenido: `[cliente vino de un anuncio: ${partes.join(', ')}]`,
+              canal: 'messenger', tipo: 'texto',
+            });
+            console.log(`[Messenger] Referral capturado: ${partes.join(', ')}`);
+          } catch { /* noop */ }
+        }
+      }
+
+      if (!messaging.message) return;
 
       if (messaging.message.is_echo) {
         manejarEcho({ canal: 'messenger', messaging });
