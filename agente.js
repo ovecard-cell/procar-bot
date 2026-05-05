@@ -102,6 +102,18 @@ const herramientas = [
     },
   },
   {
+    name: 'enviar_fotos_auto',
+    description: 'Manda al cliente las fotos de un auto del inventario por el mismo canal donde está chateando (WhatsApp/Instagram/Messenger). Usar después de buscar_inventario, cuando el cliente quiere ver el auto o vos le dijiste "te paso fotos". Manda hasta 4 fotos. Si no podés mandar fotos por el canal o no hay fotos, devuelve mensaje de error.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        marca: { type: 'string', description: 'Marca del auto (ej: Toyota, Volkswagen). Opcional.' },
+        modelo: { type: 'string', description: 'Modelo (ej: Corolla XEI, Gol Trend). Pasá lo más específico posible. Requerido.' },
+      },
+      required: ['modelo'],
+    },
+  },
+  {
     name: 'guardar_lead',
     description: 'Guarda los datos de un cliente interesado en comprar un auto. Usar cuando el cliente da su nombre, CUIL, presupuesto o cuenta qué busca.',
     input_schema: {
@@ -181,6 +193,46 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
       return `- ${a.marca} ${a.modelo} ${a.anio || ''} (${a.km || '?'} km, ${a.estado || (a.disponible ? 'disponible' : 'no disponible')})${fotos}`;
     }).join('\n');
     return `STOCK ENCONTRADO (${resultados.length} resultado/s):\n${lista}\n\nPodés confirmar al cliente que el auto está, mandar fotos si pide, y avanzar la conversación.`;
+  }
+
+  if (nombre === 'enviar_fotos_auto') {
+    const { buscarAutos } = require('./database');
+    const resultados = buscarAutos({ marca: input.marca, modelo: input.modelo });
+    if (!resultados.length) return `SIN STOCK: no encontré "${input.modelo}" para mandar fotos. Decile al cliente que ese modelo no está disponible y escalá al vendedor para alternativas.`;
+    const auto = resultados[0];
+    const fotos = (auto.fotos || []).slice(0, 4);
+    if (!fotos.length) return `Sin fotos cargadas para ${auto.marca} ${auto.modelo}. Avisale al cliente que el vendedor le pasa fotos cuando se comunique, y seguí.`;
+
+    const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN
+      ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+      : (process.env.BASE_URL || 'https://procar-bot-production.up.railway.app');
+
+    let enviadas = 0, errores = [];
+    for (const filename of fotos) {
+      const url = `${baseUrl}/media/${encodeURIComponent(filename)}`;
+      try {
+        if (canal === 'messenger' || canal === 'facebook') {
+          const { enviarMessengerMedia } = require('./webhook');
+          await enviarMessengerMedia(telefono, url, 'image');
+        } else if (canal === 'instagram') {
+          const { enviarInstagramMedia } = require('./webhook');
+          await enviarInstagramMedia(telefono, url, 'image');
+        } else if (canal === 'whatsapp') {
+          const { enviarWhatsAppMedia } = require('./webhook');
+          await enviarWhatsAppMedia(require('./config').WHATSAPP_PHONE_ID, telefono, url, 'image');
+        } else {
+          errores.push(`canal ${canal} no soporta fotos`);
+          break;
+        }
+        enviadas++;
+      } catch (err) {
+        errores.push(err.message);
+      }
+    }
+    if (enviadas === 0) {
+      return `No pude mandar las fotos (${errores.join('; ')}). Mejor decile al cliente que el vendedor se las pasa al toque.`;
+    }
+    return `LISTO: ${enviadas} foto(s) enviada(s) de ${auto.marca} ${auto.modelo}. NO repitas "te paso fotos" — ya las recibió. Seguí la conversación naturalmente.`;
   }
 
   if (nombre === 'guardar_lead') {
@@ -404,6 +456,15 @@ CÓMO RESPONDER:
    nada al cierre de la venta y solo gastan tokens y tiempo del cliente. Mandá las
    fotos y listo. Si el cliente quiere seguir, escribe; si no, no insistas con
    small talk.
+
+   📸 IMPORTANTE — cómo mandar las fotos de verdad:
+   Cuando vas a decir "te paso fotos" / "te mando fotos", usá la herramienta
+   enviar_fotos_auto pasándole el modelo. La herramienta dispara las fotos al
+   cliente por el mismo canal donde está chateando. Idealmente, llamá la
+   herramienta ANTES de mandar el texto — así primero llegan las fotos y
+   después tu mensaje. Si la herramienta devuelve LISTO, NO repitas "te paso
+   fotos" — el cliente ya las recibió. Si devuelve error o "sin fotos", avisá
+   que el vendedor se las pasa cuando se comunique.
 
    La idea: en NINGÚN momento del chat con Gonzalo el cliente se entera de que el
    precio cambia según la operación. El precio cerrado lo da el vendedor humano
