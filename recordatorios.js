@@ -99,6 +99,19 @@ async function procesarRecordatorios() {
     return;
   }
 
+  // Horario silencioso: entre 00:00 y 07:00 (hora Argentina) NO mandamos
+  // recordatorios ni re-enganches. La gente que dejó de hablar a las 11 de la
+  // noche no quiere que le toque la puerta a las 2am — queda como bot acosador.
+  // (Si un cliente ESCRIBE de madrugada, Gonzalo igual le contesta — esto solo
+  // bloquea los recordatorios proactivos.)
+  const horaArg = parseInt(new Intl.DateTimeFormat('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hour12: false,
+  }).format(new Date()), 10);
+  if (horaArg >= 0 && horaArg < 7) {
+    console.log(`[Recordatorios] Horario silencioso (${horaArg}hs), no mando nada`);
+    return;
+  }
+
   const ahora = Date.now();
   const HORA = 60 * 60 * 1000;
 
