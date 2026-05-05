@@ -160,6 +160,16 @@
 </div>
 
 <div style="padding: 0 24px 16px;">
+  <div class="panel" style="background:#2a0d12; padding:16px; border-radius:12px; border:1px solid #e63946;">
+    <h2 style="font-size:0.95rem; padding:0 0 12px 0; background:transparent; border:none; display:flex; align-items:center; justify-content:space-between; gap:8px; color:#ff6b78;">
+      <span>🚨 LEADS ABANDONADOS — están esperando respuesta</span>
+      <span id="leadsAbBadge" style="font-size:0.8rem; padding:4px 12px; border-radius:10px; background:#e63946; color:#fff; font-weight:700;">0</span>
+    </h2>
+    <div id="leadsAbandonados" style="display:flex; flex-direction:column; gap:8px;"><div style="color:#888; font-size:0.8rem;">Cargando…</div></div>
+  </div>
+</div>
+
+<div style="padding: 0 24px 16px;">
   <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
     <h2 style="font-size:0.85rem; padding:0 0 12px 0; background:transparent; border:none; display:flex; align-items:center; justify-content:space-between; gap:8px;">
       <span>🛒 MARKETPLACE (Facebook)</span>
@@ -773,6 +783,41 @@
   cargarTodo();
   // Auto-refresh cada 10s
   setInterval(cargarTodo, 10000);
+
+  // === LEADS ABANDONADOS ===
+  async function cargarLeadsAbandonados() {
+    try {
+      const r = await fetch('/api/leads-abandonados');
+      const data = await r.json();
+      const cont = document.getElementById('leadsAbandonados');
+      const badge = document.getElementById('leadsAbBadge');
+      badge.textContent = data.total;
+      badge.style.background = data.total === 0 ? '#2a9d8f' : '#e63946';
+      if (data.total === 0) {
+        cont.innerHTML = '<div style="color:#9fe9a4; font-size:0.85rem;">✅ Todo al día, ningún cliente esperando.</div>';
+        return;
+      }
+      const colores = { amarillo:'#f0b500', rojo:'#e63946', negro:'#000' };
+      cont.innerHTML = data.items.map(it => `
+        <div onclick="abrirConv('${it.telefono}')" style="display:flex; align-items:center; gap:10px; padding:10px 12px; background:#1a1a2e; border-radius:8px; cursor:pointer; border-left:4px solid ${colores[it.nivel]||'#888'};">
+          <div style="font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:6px; background:${colores[it.nivel]||'#888'}; color:#fff; min-width:50px; text-align:center;">⏱ ${escapar(it.label)}</div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:600; color:#eee;">${escapar(it.nombre)} <span style="font-size:0.7rem; color:#888; font-weight:400;">· ${escapar(it.canal)} · a cargo: ${escapar(it.a_cargo)}</span></div>
+            <div style="font-size:0.78rem; color:#aaa; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">"${escapar(it.ultimo_msg)}"</div>
+          </div>
+        </div>
+      `).join('');
+    } catch (err) {
+      document.getElementById('leadsAbandonados').innerHTML = '<div style="color:#e63946; font-size:0.8rem;">Error cargando leads</div>';
+    }
+  }
+  function abrirConv(tel) {
+    convActiva = tel;
+    cargarMensajes(tel);
+    document.querySelector('#mensajes')?.scrollIntoView({ behavior:'smooth' });
+  }
+  cargarLeadsAbandonados();
+  setInterval(cargarLeadsAbandonados, 15000);
 
   // === Marketplace ===
   let mpUltimoLogTs = 0;

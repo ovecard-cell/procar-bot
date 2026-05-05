@@ -390,6 +390,60 @@ app.get('/api/estado', (req, res) => {
   res.json({ activo: getSetting('agente_activo', 'true') === 'true' });
 });
 
+// LEADS ABANDONADOS — clientes donde la pelota quedó del lado nuestro y nadie
+// respondió. Devuelve lista ordenada por más colgados primero.
+// Reglas:
+//   - El último mensaje es del CLIENTE (rol='user').
+//   - Pasaron MÁS de 30 min desde ese mensaje.
+//   - No se le respondió aún.
+app.get('/api/leads-abandonados', (req, res) => {
+  try {
+    const { db } = require('./database');
+    const filas = db.prepare(`
+      SELECT c.telefono, c.canal, c.contenido as ultimo_msg, c.creado_en as fecha,
+             cl.nombre as nombre_cliente,
+             (SELECT v.nombre FROM asignaciones a
+                JOIN vendedores v ON v.id = a.vendedor_id
+                WHERE a.cliente_telefono = c.telefono
+                ORDER BY a.creado_en DESC LIMIT 1) as vendedor_asignado,
+             (SELECT value FROM settings WHERE key = 'bot_pausado_' || c.telefono) as bot_pausado
+      FROM conversaciones c
+      LEFT JOIN clientes cl ON cl.telefono = c.telefono
+      WHERE c.id = (SELECT MAX(id) FROM conversaciones WHERE telefono = c.telefono)
+        AND c.rol = 'user'
+        AND (julianday('now') - julianday(c.creado_en)) * 24 * 60 > 30
+      ORDER BY c.creado_en ASC
+    `).all();
+
+    const ahora = Date.now();
+    const items = filas.map(f => {
+      const min = Math.floor((ahora - new Date(f.fecha).getTime()) / 60000);
+      let nivel = 'amarillo';
+      let label = `${min} min`;
+      if (min >= 120 && min < 1440) { nivel = 'rojo'; label = `${Math.floor(min/60)}h`; }
+      else if (min >= 1440) { nivel = 'negro'; label = `${Math.floor(min/1440)}d`; }
+      const aCargo = f.bot_pausado === 'true'
+        ? (f.vendedor_asignado || 'vendedor')
+        : 'Gonzalo (bot)';
+      return {
+        telefono: f.telefono,
+        canal: f.canal,
+        nombre: f.nombre_cliente || `Cliente ${String(f.telefono).slice(-4)}`,
+        ultimo_msg: (f.ultimo_msg || '').slice(0, 120),
+        minutos: min,
+        nivel,
+        label,
+        a_cargo: aCargo,
+      };
+    });
+
+    res.json({ total: items.length, items });
+  } catch (err) {
+    console.error('[Leads abandonados] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─────────────────────────────────────────────
 // EMBUDO DE LEADS — vista por etapas
 // ─────────────────────────────────────────────
