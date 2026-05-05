@@ -359,14 +359,25 @@ async function procesarColaDeNotificacionesAVendedores() {
       console.log(`[Cola WA] Notificada asignación ${a.id} → ${a.vendedor_nombre}`);
     } catch (err) {
       fallados++;
-      console.error(`[Cola WA] Error notificando asignación ${a.id} → ${a.vendedor_nombre}:`,
-        err.response?.data?.error?.message || err.message);
+      const msg = err.response?.data?.error?.message || err.message;
+      // El error #133010 (Account not registered) es conocido y se va a repetir
+      // hasta que aprueben el WA en Meta. Lo logueamos UNA sola vez por vuelta.
+      if (msg.includes('133010') || msg.toLowerCase().includes('not registered')) {
+        if (!cuentaNoRegistradaYaLogueado) {
+          console.log(`[Cola WA] WhatsApp no registrado en Meta — ${pendientes.length} leads en cola esperando aprobacion`);
+          cuentaNoRegistradaYaLogueado = true;
+        }
+      } else {
+        console.error(`[Cola WA] Error notificando asignación ${a.id} → ${a.vendedor_nombre}:`, msg);
+      }
     }
   }
-  if (enviados > 0 || fallados > 0 || salteados > 0) {
+  if (enviados > 0) {
     console.log(`[Cola WA] Vuelta: ${enviados} notificadas, ${fallados} con error, ${salteados} salteadas.`);
   }
 }
+// Flag para no spamear logs con el error de cuenta no registrada.
+let cuentaNoRegistradaYaLogueado = false;
 
 function iniciarCron() {
   // Cada 15 minutos: recordatorios al cliente.
