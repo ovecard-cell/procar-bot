@@ -141,6 +141,40 @@ const uploadMedia = multer({
   },
 });
 
+// Comprime una imagen (resize a max 1600px de ancho, jpg quality 80) para ahorrar
+// espacio en el volumen. Re-escribe el mismo archivo. Si no es imagen, no toca.
+// Si la imagen ya pesa poco (<150KB), no la toca tampoco.
+async function comprimirImagen(filePath) {
+  try {
+    const sharp = require('sharp');
+    const stat = fs.statSync(filePath);
+    if (stat.size < 150 * 1024) return; // ya es chica
+    const ext = (filePath.split('.').pop() || '').toLowerCase();
+    if (!['jpg', 'jpeg', 'png', 'webp'].includes(ext)) return;
+    const tmp = filePath + '.tmp';
+    await sharp(filePath)
+      .rotate() // respeta orientación EXIF y la aplica
+      .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 80, mozjpeg: true })
+      .toFile(tmp);
+    fs.renameSync(tmp, filePath);
+    const after = fs.statSync(filePath).size;
+    console.log(`[Compresion] ${filePath.split('/').pop()}: ${(stat.size/1024).toFixed(0)}KB → ${(after/1024).toFixed(0)}KB`);
+  } catch (err) {
+    console.error('[Compresion] error:', err.message);
+  }
+}
+
+// Helper para comprimir un array de archivos subidos por multer.
+async function comprimirSubidas(files) {
+  if (!Array.isArray(files)) return;
+  for (const f of files) {
+    if (f.mimetype && f.mimetype.startsWith('image/')) {
+      await comprimirImagen(f.path);
+    }
+  }
+}
+
 // Health check
 app.get('/', (req, res) => {
   res.send('Bot Procar funcionando correctamente');
@@ -480,8 +514,9 @@ app.post('/api/inventario', (req, res, next) => {
     if (err) return res.status(400).json({ error: err.message });
     next();
   });
-}, (req, res) => {
+}, async (req, res) => {
   try {
+    await comprimirSubidas(req.files);
     const fotos = (req.files || []).map(f => f.filename);
     const id = crearAuto({ ...req.body, fotos });
     res.json({ ok: true, id });
@@ -496,8 +531,9 @@ app.patch('/api/inventario/:id', (req, res, next) => {
     if (err) return res.status(400).json({ error: err.message });
     next();
   });
-}, (req, res) => {
+}, async (req, res) => {
   try {
+    await comprimirSubidas(req.files);
     const id = parseInt(req.params.id, 10);
     const data = { ...req.body };
     // Si hay fotos nuevas, las agregamos a las que ya tenia (sin pisar).
@@ -1101,6 +1137,35 @@ app.post('/api/setup-routing', (req, res) => {
 });
 
 // Reset de contraseñas a las defaults (admin) — útil para arrancar
+// Comprime todas las fotos del MEDIA_DIR existentes — para liberar espacio
+// del volumen sin perder fotos. Es idempotente: las que ya estan chicas no las toca.
+app.get('/api/admin/comprimir-fotos', async (req, res) => {
+  try {
+    const archivos = fs.readdirSync(MEDIA_DIR).filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
+    let antes = 0, despues = 0, procesadas = 0;
+    for (const f of archivos) {
+      const ruta = path.join(MEDIA_DIR, f);
+      const sa = fs.statSync(ruta).size;
+      antes += sa;
+      await comprimirImagen(ruta);
+      const sd = fs.statSync(ruta).size;
+      despues += sd;
+      if (sd < sa) procesadas++;
+    }
+    const ahorroMB = ((antes - despues) / 1024 / 1024).toFixed(1);
+    res.json({
+      ok: true,
+      total: archivos.length,
+      procesadas,
+      antes_mb: (antes/1024/1024).toFixed(1),
+      despues_mb: (despues/1024/1024).toFixed(1),
+      ahorro_mb: ahorroMB,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/admin/reset-passwords', (req, res) => {
   const { db } = require('./database');
   const vendedores = db.prepare('SELECT id, nombre FROM vendedores').all();
