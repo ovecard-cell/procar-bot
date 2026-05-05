@@ -40,26 +40,11 @@ const CADENCIA_GENERAL = [
   },
 ];
 
-const CADENCIA_POST_ESCALADO = [
-  {
-    tipo: 'esc_6h',
-    horas: 6,
-    plantilla: (vendedor) => pick([
-      `che, ¿pudo escribirte ${vendedor || 'el vendedor'}? si no, avisame y le toco la puerta`,
-      `¿${vendedor || 'el vendedor'} ya se comunicó? cualquier cosa decime`,
-      `¿te llegó el mensaje de ${vendedor || 'el vendedor'}? si no, lo apuro`,
-    ]),
-  },
-  {
-    tipo: 'esc_18h',
-    horas: 18,
-    plantilla: (vendedor) => pick([
-      `¿qué te pareció lo que te pasó ${vendedor || 'el vendedor'}? si hay algo para ajustar, decime y vemos`,
-      `che, ¿pudiste hablar con ${vendedor || 'el vendedor'}? cualquier cosa que quieras revisar avisame`,
-      `¿cómo quedó la cosa con ${vendedor || 'el vendedor'}? si querés ajustar algo decime`,
-    ]),
-  },
-];
+// IMPORTANTE: cuando el cliente ya fue escalado a un vendedor, NO le mandamos
+// recordatorios al cliente — sería como que el bot lo persiga por algo que es
+// problema interno nuestro (que el vendedor no respondió). En vez de eso, le
+// avisamos al VENDEDOR que tiene un lead colgado (ver pingearVendedoresColgados).
+const CADENCIA_POST_ESCALADO = [];
 
 // Quién manda el recordatorio según el canal
 async function enviarRecordatorio(cliente, texto) {
@@ -271,6 +256,73 @@ async function rescatarConversacionesColgadas() {
 }
 
 // ─────────────────────────────────────────────
+// PING AL VENDEDOR — leads colgados de su lado
+// Cada vez que corre el cron, miramos qué vendedores tienen leads donde:
+//  - Está pausado el bot (vendedor a cargo)
+//  - El último mensaje es del CLIENTE (rol=user)
+//  - Pasó >2hs sin que el vendedor responda
+//  - No le pingueamos en las últimas 4hs por ESE cliente
+// Le mandamos al vendedor por WhatsApp un recordatorio puntual.
+// ─────────────────────────────────────────────
+async function pingearVendedoresColgados() {
+  if (getSetting('agente_activo', 'true') !== 'true') return;
+
+  // Respetamos horario silencioso 00-07 también para no despertar al vendedor
+  const horaArg = parseInt(new Intl.DateTimeFormat('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hour12: false,
+  }).format(new Date()), 10);
+  if (horaArg >= 0 && horaArg < 7) return;
+
+  const candidatos = db.prepare(`
+    SELECT c.telefono, c.canal, c.creado_en as ultimo_msg_cliente,
+           v.id as vendedor_id, v.nombre as vendedor_nombre, v.telefono as vendedor_telefono,
+           v.activo as vendedor_activo, v.disponible as vendedor_disponible,
+           a.vehiculo_interes, a.cliente_nombre,
+           (SELECT value FROM settings WHERE key = 'ping_vendedor_' || c.telefono) as ultimo_ping
+    FROM conversaciones c
+    JOIN asignaciones a ON a.cliente_telefono = c.telefono
+    JOIN vendedores v ON v.id = a.vendedor_id
+    WHERE c.id = (SELECT MAX(id) FROM conversaciones WHERE telefono = c.telefono)
+      AND c.rol = 'user'
+      AND a.creado_en = (SELECT MAX(creado_en) FROM asignaciones WHERE cliente_telefono = c.telefono)
+      AND (SELECT value FROM settings WHERE key = 'bot_pausado_' || c.telefono) = 'true'
+  `).all();
+
+  let pingueados = 0;
+  for (const c of candidatos) {
+    const horasSinResponder = (Date.now() - new Date(c.ultimo_msg_cliente).getTime()) / (60 * 60 * 1000);
+    if (horasSinResponder < 2) continue;
+    if (!c.vendedor_activo || !c.vendedor_telefono) continue;
+
+    // No spamear: si pingueamos por este cliente hace <4hs, salteamos.
+    if (c.ultimo_ping) {
+      const horasDesdeUltimoPing = (Date.now() - new Date(c.ultimo_ping).getTime()) / (60 * 60 * 1000);
+      if (horasDesdeUltimoPing < 4) continue;
+    }
+
+    const cliente = c.cliente_nombre || `Cliente ${String(c.telefono).slice(-4)}`;
+    const auto = c.vehiculo_interes || 'consulta';
+    const horas = Math.floor(horasSinResponder);
+    const texto = `🔔 ${c.vendedor_nombre}, ${cliente} (${auto}) está esperando tu respuesta hace ${horas}h. Le toca a vos contestarle.`;
+
+    try {
+      const { enviarWhatsAppVendedor } = require('./mensajero');
+      await enviarWhatsAppVendedor(c.vendedor_telefono, texto);
+      db.prepare(`
+        INSERT INTO settings (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = ?
+      `).run(`ping_vendedor_${c.telefono}`, new Date().toISOString(), new Date().toISOString());
+      pingueados++;
+      console.log(`[Ping vendedor] ${c.vendedor_nombre} avisado por ${cliente} (${horas}h sin respuesta)`);
+    } catch (err) {
+      // Probablemente WA todavía no aprobado — log silencioso.
+      console.log(`[Ping vendedor] No pude avisar a ${c.vendedor_nombre} (WA no disponible): ${err.message}`);
+    }
+  }
+  if (pingueados > 0) console.log(`[Ping vendedor] ${pingueados} vendedores avisados`);
+}
+
+// ─────────────────────────────────────────────
 // COLA DE NOTIFICACIONES A VENDEDORES
 // Si entra un lead cuando el vendedor asignado tiene "no recibir leads"
 // activado, no le tocamos la puerta. Encolamos y mandamos cuando se ponga
@@ -323,13 +375,14 @@ function iniciarCron() {
   // al vendedor en vez de meter al bot a la conversacion.
   cron.schedule('*/15 * * * *', () => {
     procesarRecordatorios().catch(err => console.error('[Recordatorios] Crash:', err.message));
+    pingearVendedoresColgados().catch(err => console.error('[Ping vendedor] Crash:', err.message));
   });
   // Cada 5 minutos chequeamos la cola de notificaciones a vendedores. Es liviano:
   // si estamos fuera de horario, ni se conecta. Si entramos en horario, vacía la cola.
   cron.schedule('*/5 * * * *', () => {
     procesarColaDeNotificacionesAVendedores().catch(err => console.error('[Cola WA] Crash:', err.message));
   });
-  console.log('[Recordatorios] Cron iniciado (recordatorios cada 15min, cola WA cada 5min — rescate desactivado)');
+  console.log('[Recordatorios] Cron iniciado (recordatorios + ping vendedor cada 15min, cola WA cada 5min)');
 }
 
 module.exports = { iniciarCron, procesarRecordatorios, limpiarRecordatorios, procesarColaDeNotificacionesAVendedores };
