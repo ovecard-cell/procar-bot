@@ -155,6 +155,23 @@ function manejarEcho({ canal, messaging }) {
     } catch (err) { /* noop */ }
   }
 
+  // Solo pausamos el bot si el cliente YA escribió antes. Caso contrario el
+  // echo es el saludo automático del anuncio de Meta (o un primer toque del
+  // vendedor) — pausarlo dejaría a Gonzalo sin atender al cliente cuando
+  // responda, que es lo opuesto a lo que queremos.
+  try {
+    const { db } = require('./database');
+    const tieneUser = db.prepare(
+      "SELECT 1 FROM conversaciones WHERE telefono = ? AND rol = 'user' LIMIT 1"
+    ).get(recipientId);
+    if (!tieneUser) {
+      console.log(`[${canal}] Echo humano sin conversación previa del cliente — NO pauso bot (probable saludo de anuncio)`);
+      return;
+    }
+  } catch (err) {
+    console.error(`[${canal}] No pude chequear historial:`, err.message);
+  }
+
   setSetting(`bot_pausado_${recipientId}`, 'true');
   console.log(`[${canal}] Humano respondió desde Business Suite → bot PAUSADO para ${recipientId}`);
 }
