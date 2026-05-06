@@ -145,10 +145,16 @@ function extraerTextoAttachment(att) {
 function manejarEcho({ canal, messaging }) {
   const recipientId = messaging.recipient?.id;
   const message = messaging.message;
-  const esNuestro = message?.metadata === BOT_METADATA;
+  const textoEcho = (message?.text || '').trim();
 
-  if (esNuestro) {
-    console.log(`[${canal}] Echo del propio bot ignorado`);
+  // Detección 1: metadata que pusimos al enviar (Meta a veces la conserva).
+  const matchMetadata = message?.metadata === BOT_METADATA;
+  // Detección 2: fingerprint por (recipient + texto) que enviamos en últimos 60s.
+  // Esto cubre el caso de Instagram donde Meta descarta la metadata en el echo.
+  const matchFingerprint = textoEcho && fueEnviadoPorBot(recipientId, textoEcho);
+
+  if (matchMetadata || matchFingerprint) {
+    console.log(`[${canal}] Echo del propio bot ignorado (meta=${matchMetadata}, fp=${matchFingerprint})`);
     return;
   }
   if (!recipientId) return;
@@ -556,8 +562,29 @@ async function enviarWhatsApp(phoneId, destinatario, texto) {
 
 // Marca que ponemos a TODOS los mensajes salientes del bot. Cuando Meta nos
 // rebota un echo, si trae esta metadata sabemos que es nuestro y lo ignoramos.
-// Si NO la trae, es un humano respondiendo desde Business Suite → pausamos el bot.
+// PERO: Meta NO siempre conserva la metadata en el echo (especialmente en
+// Instagram). Por eso además mantenemos un cache de "recién enviados" como
+// fingerprint de respaldo.
 const BOT_METADATA = 'procar-bot-v1';
+
+// Cache de mensajes que el bot envió recientemente: clave "recipient::text" → ts.
+// Cuando llega un echo, si el (recipient, text) matchea algo enviado en los
+// últimos 60s, sabemos que es nuestro echo y lo ignoramos sin pausar.
+const RECIENTES_BOT = new Map();
+const RECIENTES_TTL_MS = 60 * 1000;
+function marcarEnviadoPorBot(recipientId, texto) {
+  if (!recipientId || !texto) return;
+  const key = `${recipientId}::${String(texto).slice(0, 200)}`;
+  const ahora = Date.now();
+  // limpieza
+  for (const [k, ts] of RECIENTES_BOT) if (ahora - ts > RECIENTES_TTL_MS) RECIENTES_BOT.delete(k);
+  RECIENTES_BOT.set(key, ahora);
+}
+function fueEnviadoPorBot(recipientId, texto) {
+  if (!recipientId || !texto) return false;
+  const key = `${recipientId}::${String(texto).slice(0, 200)}`;
+  return RECIENTES_BOT.has(key);
+}
 
 async function enviarInstagram(recipientId, texto) {
   const token = config.INSTAGRAM_ACCESS_TOKEN || config.META_ACCESS_TOKEN;
@@ -566,6 +593,7 @@ async function enviarInstagram(recipientId, texto) {
     : `https://graph.facebook.com/v19.0/me/messages`;
 
   try {
+    marcarEnviadoPorBot(recipientId, texto);
     await axios.post(
       url,
       { recipient: { id: recipientId }, message: { text: texto, metadata: BOT_METADATA } },
@@ -580,6 +608,7 @@ async function enviarInstagram(recipientId, texto) {
 
 async function enviarMessenger(recipientId, texto) {
   try {
+    marcarEnviadoPorBot(recipientId, texto);
     await axios.post(
       `https://graph.facebook.com/v19.0/me/messages`,
       {
