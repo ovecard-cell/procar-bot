@@ -123,6 +123,11 @@
   <button id="btnDispo" class="btn-disponibilidad entrar">— —</button>
 </div>
 
+<!-- BARRA DE RESUMEN POR VENDEDOR -->
+<div id="barraVendedores" style="padding: 12px 24px 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
+  <div style="color:#888; font-size:0.8rem;">Cargando vendedores...</div>
+</div>
+
 <div class="nav-links">
   <a id="linkEmbudo" href="/admin/embudo">🪜 Embudo de leads</a>
   <a id="linkInventario" href="/admin/inventario">📦 Inventario</a>
@@ -441,7 +446,12 @@
   }
 
   async function cargarConversaciones() {
-    const res = await fetch('/api/conversaciones' + FILTRO);
+    // Si hay filtro por vendedor activo (desde las tarjetas del tope), lo aplicamos.
+    let url = '/api/conversaciones' + FILTRO;
+    if (filtroVendedor) {
+      url += (FILTRO ? '&' : '?') + 'vendedor=' + encodeURIComponent(filtroVendedor);
+    }
+    const res = await fetch(url);
     const data = await res.json();
     const lista = document.getElementById('lista');
 
@@ -667,7 +677,71 @@
     cargarConversaciones();
     cargarVendedores();
     cargarMiDisponibilidad();
+    cargarResumenVendedores();
     if (convActiva) cargarMensajes(convActiva);
+  }
+
+  // === RESUMEN POR VENDEDOR (tarjetas del tope) ===
+  let filtroVendedor = null; // si está seteado, cargarConversaciones filtra por este vendedor
+  async function cargarResumenVendedores() {
+    try {
+      const r = await fetch('/api/vendedores/resumen');
+      const data = await r.json();
+      const cont = document.getElementById('barraVendedores');
+      if (!data.vendedores || data.vendedores.length === 0) {
+        cont.innerHTML = '<div style="color:#888; font-size:0.8rem;">No hay vendedores cargados.</div>';
+        return;
+      }
+
+      // Detectar el vendedor con el lead mas viejo pendiente (para destacar)
+      let masViejoHoras = -1;
+      for (const v of data.vendedores) {
+        if (v.lead_mas_viejo && v.lead_mas_viejo.horas > masViejoHoras) masViejoHoras = v.lead_mas_viejo.horas;
+      }
+
+      cont.innerHTML = data.vendedores.map(v => {
+        const esElPeor = v.lead_mas_viejo && v.lead_mas_viejo.horas === masViejoHoras && masViejoHoras > 0;
+        const estadoColor = v.activo ? (v.disponible ? '#2a9d8f' : '#f0b500') : '#e63946';
+        const estadoTxt = v.activo ? (v.disponible ? '🟢 Activo' : '🟡 Sin recibir') : '🔴 Pausado';
+        const filtrando = filtroVendedor && filtroVendedor.toLowerCase() === v.nombre.toLowerCase();
+        const borde = esElPeor ? '2px solid #e63946' : (filtrando ? '2px solid #C9A84C' : '1px solid #333');
+        const bg = filtrando ? '#2a2515' : '#1a1a2e';
+        const leadViejoHtml = v.lead_mas_viejo
+          ? `<div style="font-size:0.72rem; color:#ff8a8a; margin-top:6px; line-height:1.3;">⚠ ${escapar(v.lead_mas_viejo.nombre)}<br><span style="color:#ffb3b3;">${escapar(v.lead_mas_viejo.label)}</span></div>`
+          : `<div style="font-size:0.72rem; color:#9fe9a4; margin-top:6px;">✅ Sin pendientes</div>`;
+        return `
+          <div data-vendedor="${escapar(v.nombre)}" class="tarjeta-vendedor" style="background:${bg}; border:${borde}; border-radius:10px; padding:12px; cursor:pointer; transition:transform .12s;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <div style="font-weight:700; color:#C9A84C; font-size:0.95rem;">${escapar(v.nombre)}</div>
+              <div style="font-size:0.7rem; color:${estadoColor}; font-weight:600;">${estadoTxt}</div>
+            </div>
+            <div style="display:flex; gap:14px; font-size:0.78rem; color:#ddd;">
+              <div><b style="color:#fff;">${v.leads_asignados}</b> totales</div>
+              <div><b style="color:#fff;">${v.leads_hoy}</b> hoy</div>
+            </div>
+            ${leadViejoHtml}
+          </div>
+        `;
+      }).join('');
+
+      // Click → filtrar conversaciones por este vendedor + scrollear
+      cont.querySelectorAll('.tarjeta-vendedor').forEach(card => {
+        card.addEventListener('click', () => {
+          const nombre = card.dataset.vendedor;
+          if (filtroVendedor && filtroVendedor.toLowerCase() === nombre.toLowerCase()) {
+            // segundo click → desfiltro
+            filtroVendedor = null;
+          } else {
+            filtroVendedor = nombre;
+          }
+          cargarConversaciones();
+          cargarResumenVendedores();
+          document.querySelector('.layout')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      });
+    } catch (err) {
+      console.error('Error cargando resumen vendedores:', err);
+    }
   }
 
   document.getElementById('btnToggle').addEventListener('click', toggleAgente);

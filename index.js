@@ -345,6 +345,96 @@ app.post('/api/vendedor/cambiar-password', (req, res) => {
 });
 
 // API JSON para el dashboard
+// Resumen por vendedor: para la barra de tarjetas del tope del dashboard.
+// Devuelve por cada vendedor: estado, leads asignados, leads de hoy, y el
+// lead mas viejo sin respuesta (si lo hay).
+app.get('/api/vendedores/resumen', (req, res) => {
+  try {
+    const { db } = require('./database');
+    const vendedores = db.prepare(`
+      SELECT id, nombre, activo, disponible
+      FROM vendedores
+      ORDER BY id ASC
+    `).all();
+
+    const ahora = Date.now();
+    const resumen = vendedores.map(v => {
+      // Total de leads asignados a este vendedor (asignaciones distintas por cliente).
+      const leadsTotales = db.prepare(`
+        SELECT COUNT(DISTINCT cliente_telefono) as n
+        FROM asignaciones WHERE vendedor_id = ?
+      `).get(v.id)?.n || 0;
+
+      // Leads asignados HOY (desde 00:00 hora local del server — Railway corre UTC,
+      // pero Argentina es UTC-3; usamos la hora actual de Argentina).
+      const tzOff = 3 * 60; // minutos
+      const ahoraDate = new Date(Date.now() - tzOff * 60 * 1000);
+      const inicioHoyAR = new Date(Date.UTC(
+        ahoraDate.getUTCFullYear(), ahoraDate.getUTCMonth(), ahoraDate.getUTCDate(), 3, 0, 0
+      )); // 00:00 ARG = 03:00 UTC
+      const leadsHoy = db.prepare(`
+        SELECT COUNT(*) as n
+        FROM asignaciones
+        WHERE vendedor_id = ? AND creado_en >= ?
+      `).get(v.id, inicioHoyAR.toISOString())?.n || 0;
+
+      // Lead mas viejo SIN RESPUESTA del vendedor:
+      // - vendedor asignado a este cliente (ultima asignacion)
+      // - bot_pausado_<tel> = 'true'
+      // - ultimo mensaje es 'user'
+      // - no marcado como leido (marcado_leido_ts < ts del ultimo user)
+      const masViejo = db.prepare(`
+        SELECT cl.nombre, c.telefono, MAX(c.creado_en) as ultimo
+        FROM conversaciones c
+        LEFT JOIN clientes cl ON cl.telefono = c.telefono
+        WHERE c.telefono IN (
+          SELECT a.cliente_telefono FROM asignaciones a
+          WHERE a.vendedor_id = ?
+            AND a.creado_en = (SELECT MAX(creado_en) FROM asignaciones WHERE cliente_telefono = a.cliente_telefono)
+        )
+        AND (SELECT value FROM settings WHERE key = 'bot_pausado_' || c.telefono) = 'true'
+        AND (SELECT rol FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) = 'user'
+        AND COALESCE(
+          (SELECT value FROM settings WHERE key = 'marcado_leido_' || c.telefono),
+          '1970-01-01'
+        ) < (SELECT creado_en FROM conversaciones WHERE telefono = c.telefono AND rol = 'user' ORDER BY creado_en DESC LIMIT 1)
+        GROUP BY c.telefono
+        ORDER BY ultimo ASC
+        LIMIT 1
+      `).get(v.id);
+
+      let leadMasViejo = null;
+      if (masViejo) {
+        const horas = Math.floor((ahora - new Date(masViejo.ultimo).getTime()) / (60 * 60 * 1000));
+        const dias = Math.floor(horas / 24);
+        const label = dias >= 1
+          ? `${dias}d ${horas % 24}h sin respuesta`
+          : horas >= 1 ? `${horas}h sin respuesta` : 'reciente sin respuesta';
+        leadMasViejo = {
+          nombre: masViejo.nombre || `Cliente ${String(masViejo.telefono).slice(-4)}`,
+          telefono: masViejo.telefono,
+          horas, dias, label,
+        };
+      }
+
+      return {
+        id: v.id,
+        nombre: v.nombre,
+        activo: !!v.activo,
+        disponible: !!v.disponible,
+        leads_asignados: leadsTotales,
+        leads_hoy: leadsHoy,
+        lead_mas_viejo: leadMasViejo,
+      };
+    });
+
+    res.json({ vendedores: resumen });
+  } catch (err) {
+    console.error('[vendedores/resumen] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/stats', (req, res) => {
   const { db } = require('./database');
   const vendedor = req.query.vendedor;
