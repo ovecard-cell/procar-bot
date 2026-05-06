@@ -446,6 +446,10 @@ app.get('/api/leads-abandonados', (req, res) => {
       WHERE c.id = (SELECT MAX(id) FROM conversaciones WHERE telefono = c.telefono)
         AND c.rol = 'user'
         AND (julianday('now') - julianday(c.creado_en)) * 24 * 60 > 30
+        AND c.creado_en > COALESCE(
+          (SELECT value FROM settings WHERE key = 'marcado_leido_' || c.telefono),
+          '1970-01-01'
+        )
       ORDER BY c.creado_en ASC
     `).all();
 
@@ -672,9 +676,11 @@ app.get('/api/conversaciones', (req, res) => {
             END
             FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as preview,
            (SELECT rol FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as ultimo_rol,
+           (SELECT creado_en FROM conversaciones WHERE telefono = c.telefono AND rol = 'user' ORDER BY creado_en DESC LIMIT 1) as ultimo_user_ts,
            (SELECT v.nombre FROM asignaciones a JOIN vendedores v ON v.id = a.vendedor_id
             WHERE a.cliente_telefono = c.telefono ORDER BY a.creado_en DESC LIMIT 1) as vendedor_asignado,
-           (SELECT value FROM settings WHERE key = 'bot_pausado_' || c.telefono) as bot_pausado_raw
+           (SELECT value FROM settings WHERE key = 'bot_pausado_' || c.telefono) as bot_pausado_raw,
+           (SELECT value FROM settings WHERE key = 'marcado_leido_' || c.telefono) as marcado_leido_ts
     FROM conversaciones c
     LEFT JOIN clientes cl ON cl.telefono = c.telefono
   `;
@@ -853,6 +859,30 @@ app.post('/api/conversacion/:telefono/reactivar-bot', (req, res) => {
   db.prepare('DELETE FROM settings WHERE key = ?').run(`bot_pausado_${req.params.telefono}`);
   console.log(`[Bot] Reactivado para ${req.params.telefono}`);
   res.json({ ok: true });
+});
+
+// Marcar conversación como leída — el vendedor toca el botón y la conversación
+// deja de aparecer como ESPERANDO. Guardamos el timestamp del ultimo msg del
+// cliente al momento de marcar; si el cliente vuelve a escribir despues, el
+// nuevo msg del cliente tendra ts > marcado_leido_ts y volvera a aparecer.
+app.post('/api/conversacion/:telefono/marcar-leido', (req, res) => {
+  try {
+    const { db } = require('./database');
+    const tel = req.params.telefono;
+    const ultimoUser = db.prepare(
+      "SELECT creado_en FROM conversaciones WHERE telefono = ? AND rol = 'user' ORDER BY creado_en DESC LIMIT 1"
+    ).get(tel);
+    // Si nunca escribió el cliente, igual marcamos con now() para no estallar.
+    const ts = ultimoUser?.creado_en || new Date().toISOString();
+    db.prepare(`
+      INSERT INTO settings (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = ?
+    `).run(`marcado_leido_${tel}`, ts, ts);
+    console.log(`[Marcar leido] ${tel} marcado al ts=${ts}`);
+    res.json({ ok: true, marcado_leido_ts: ts });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/conversacion/:telefono', (req, res) => {

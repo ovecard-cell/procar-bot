@@ -466,12 +466,15 @@
     primeraCarga = false;
 
     // Calcular cuántos minutos lleva cada conversación esperando al vendedor.
-    // Solo cuenta si: hay vendedor asignado, bot pausado, y el último mensaje es del cliente.
+    // ESPERANDO solo si: vendedor asignado, bot pausado, último msg del cliente,
+    // Y no fue marcada como leída (marcado_leido_ts >= ultimo_user_ts).
     let esperandoTotal = 0;
     const ahora = Date.now();
     const enriquecidas = data.map(c => {
       let espera = null;
-      if (c.vendedor_asignado && c.bot_pausado && c.ultimo_rol === 'user') {
+      const yaLeida = c.marcado_leido_ts && c.ultimo_user_ts
+        && new Date(c.marcado_leido_ts).getTime() >= new Date(c.ultimo_user_ts).getTime();
+      if (c.vendedor_asignado && c.bot_pausado && c.ultimo_rol === 'user' && !yaLeida) {
         const min = (ahora - new Date(c.ultimo).getTime()) / 60000;
         if (min >= 30 && min < 120) espera = { clase: 'esperando-amarillo', label: `${Math.floor(min)} min` };
         else if (min >= 120) {
@@ -480,7 +483,7 @@
         }
       }
       if (espera) esperandoTotal++;
-      return { ...c, espera };
+      return { ...c, espera, yaLeida };
     });
 
     const cont = document.getElementById('contadorEsperando');
@@ -499,15 +502,34 @@
         </div>
         <div class="preview">${escapar(c.preview)}</div>
         <div class="fecha">${formatearFecha(c.ultimo)}${c.vendedor_asignado ? ` · 👤 <strong style="color:#C9A84C">${escapar(c.vendedor_asignado)}</strong>` : ''}</div>
+        ${c.espera ? `<button class="btn-marcar-leido" data-tel="${c.telefono}" style="margin-top:6px; background:#2a9d8f; color:white; border:none; padding:4px 10px; border-radius:4px; font-size:0.7rem; font-weight:600; cursor:pointer;">✓ Marcar leído</button>` : ''}
       </div>
     `).join('');
 
     lista.querySelectorAll('.conversacion').forEach(el => {
-      el.addEventListener('click', () => {
+      el.addEventListener('click', (ev) => {
+        // Si tocaron el botón de marcar leído, no abrir la conversación
+        if (ev.target.closest('.btn-marcar-leido')) return;
         convActiva = el.dataset.tel;
         document.querySelectorAll('.conversacion').forEach(c => c.classList.remove('activa'));
         el.classList.add('activa');
         cargarMensajes(convActiva);
+      });
+    });
+
+    // Listener del botón "Marcar leído"
+    lista.querySelectorAll('.btn-marcar-leido').forEach(btn => {
+      btn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        const tel = btn.dataset.tel;
+        btn.disabled = true; btn.textContent = '...';
+        try {
+          await fetch(`/api/conversacion/${encodeURIComponent(tel)}/marcar-leido`, { method: 'POST' });
+          await cargarConversaciones();
+        } catch (err) {
+          alert('Error al marcar: ' + err.message);
+          btn.disabled = false; btn.textContent = '✓ Marcar leído';
+        }
       });
     });
   }
