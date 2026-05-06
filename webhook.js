@@ -354,9 +354,39 @@ async function recibirMensaje(req, res) {
     // ── Instagram ──
     if (body.object === 'instagram') {
       const entry    = body.entry?.[0];
-      const messaging = entry?.messaging?.[0];
+      // Formato A (Messenger-style): entry.messaging[0]
+      // Formato B (Instagram Graph API moderno): entry.changes[0].value.messages[0]
+      let messaging = entry?.messaging?.[0];
 
-      if (!messaging) return;
+      // DIAGNOSTICO: dump del shape para ver qué estructura llega
+      console.log(`[Instagram] WEBHOOK shape: messaging=${!!entry?.messaging} (len=${entry?.messaging?.length || 0}) changes=${!!entry?.changes} (len=${entry?.changes?.length || 0}) keys=${Object.keys(entry || {}).join(',')}`);
+
+      // Soporte para Formato B — convertimos a la forma "messaging" para reutilizar
+      // todo el flujo posterior.
+      if (!messaging && Array.isArray(entry?.changes) && entry.changes.length) {
+        const ch = entry.changes[0];
+        const val = ch?.value || {};
+        const msg = Array.isArray(val.messages) && val.messages[0];
+        const fromId = val.contacts?.[0]?.wa_id || val.from || msg?.from;
+        if (msg && fromId) {
+          messaging = {
+            sender: { id: String(fromId) },
+            recipient: { id: val.metadata?.phone_number_id || entry.id },
+            timestamp: msg.timestamp ? Number(msg.timestamp) * 1000 : Date.now(),
+            message: {
+              mid: msg.id,
+              text: msg.text?.body || msg.text,
+              attachments: msg.attachments,
+            },
+          };
+          console.log(`[Instagram] Formato B detectado, sender=${fromId}`);
+        }
+      }
+
+      if (!messaging) {
+        console.log(`[Instagram] No pude extraer messaging del body. Body completo:`, JSON.stringify(body).slice(0, 800));
+        return;
+      }
 
       // Capturar referral del anuncio (ads-to-Instagram-direct).
       const refIg = messaging.referral || messaging.message?.referral;
