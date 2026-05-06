@@ -799,7 +799,13 @@ function contextoAutoDetectado(telefono) {
   try {
     const historial = obtenerHistorial(telefono);
     const detectado = extraerAutoDelHistorial(historial);
-    if (!detectado) return '';
+    console.log(`[ctxAuto] tel=${telefono} detectado=${detectado === null ? 'NULL' : JSON.stringify(detectado)} historial_len=${historial.length}`);
+    if (!detectado) {
+      // Diagnostico: si no detectó, dump las primeras lineas del historial para ver qué hay
+      const muestra = historial.slice(0, 5).map(m => `${m.rol}:${(m.contenido || '').slice(0, 80)}`);
+      console.log(`[ctxAuto] historial_sample:`, muestra);
+      return '';
+    }
     if (detectado === '__SIN_MODELO_PERO_DESDE_ANUNCIO__') {
       return `\n\nCONTEXTO DE ORIGEN: el cliente vino respondiendo un anuncio nuestro pero no tenemos el modelo capturado en el historial. Si el primer mensaje del cliente es vago ("info?", "precio?"), pedile que te diga el modelo o mande foto, sin asumir cuál es.`;
     }
@@ -1035,4 +1041,4 @@ Ejemplos buenos (combinaciones tipo):
   return sanitizarSaliente(crudo) || null;
 }
 
-module.exports = { procesarMensaje, generarRespuestaRescate, generarRecordatorioContextual, enHorarioVendedores };
+module.exports = { procesarMensaje, generarRespuestaRescate, generarRecordatorioContextual, enHorarioVendedores, extraerAutoDelHistorial, contextoAutoDetectado };

@@ -1156,6 +1156,35 @@ app.post('/api/setup-routing', (req, res) => {
 });
 
 // Reset de contraseñas a las defaults (admin) — útil para arrancar
+// Diagnostico: para una conversacion dada, devuelve qué auto detecta
+// extraerAutoDelHistorial y el bloque de system prompt que se inyectaria.
+// Sirve para verificar en vivo que el fix de contexto está corriendo.
+app.get('/api/admin/debug-auto/:telefono', (req, res) => {
+  try {
+    const { db } = require('./database');
+    const telefono = req.params.telefono;
+    const historial = db.prepare(
+      `SELECT rol, contenido, tipo, archivo, creado_en FROM conversaciones
+       WHERE telefono = ? ORDER BY creado_en DESC LIMIT 20`
+    ).all(telefono).reverse();
+    const { extraerAutoDelHistorial, contextoAutoDetectado } = require('./agente');
+    const detectado = extraerAutoDelHistorial(historial);
+    const contexto = contextoAutoDetectado(telefono);
+    res.json({
+      telefono,
+      historial_len: historial.length,
+      detectado,
+      contexto_inyectado: contexto || '(vacio)',
+      historial_muestra: historial.slice(0, 10).map(m => ({
+        rol: m.rol,
+        contenido: (m.contenido || '').slice(0, 200),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Comprime todas las fotos del MEDIA_DIR existentes — para liberar espacio
 // del volumen sin perder fotos. Es idempotente: las que ya estan chicas no las toca.
 app.get('/api/admin/comprimir-fotos', async (req, res) => {
