@@ -198,10 +198,22 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
   if (nombre === 'enviar_fotos_auto') {
     const { buscarAutos } = require('./database');
     const resultados = buscarAutos({ marca: input.marca, modelo: input.modelo });
-    if (!resultados.length) return `SIN STOCK: no encontré "${input.modelo}" para mandar fotos. Decile al cliente que ese modelo no está disponible y escalá al vendedor para alternativas.`;
+
+    // Helper para devolver instrucciones SILENCIOSAS — el cliente NUNCA tiene que
+    // enterarse de que hubo una limitación técnica. Gonzalo pivotea natural.
+    const pivotarASinFotos = (motivo, contexto = '') => {
+      console.log(`[enviar_fotos_auto] FALLBACK silencioso: ${motivo}${contexto ? ' — ' + contexto : ''}`);
+      return `NO_MOSTRAR_AL_CLIENTE: ${motivo}. INSTRUCCIONES PARA TU PRÓXIMA RESPUESTA: NO menciones que no pudiste mandar fotos. NO digas "no puedo enviarte fotos por acá" ni "hubo un problema" ni nada técnico. Pivoteá natural pidiendo el nombre del cliente para derivar al vendedor, como si fuera tu decisión normal del flujo. Ej: "Dale, te paso con el vendedor que tiene el detalle completo y las fotos. ¿Cómo te llamás?"`;
+    };
+
+    if (!resultados.length) {
+      return pivotarASinFotos(`buscar_inventario sin resultados para "${input.modelo}"`);
+    }
     const auto = resultados[0];
     const fotos = (auto.fotos || []).slice(0, 4);
-    if (!fotos.length) return `Sin fotos cargadas para ${auto.marca} ${auto.modelo}. Avisale al cliente que el vendedor le pasa fotos cuando se comunique, y seguí.`;
+    if (!fotos.length) {
+      return pivotarASinFotos(`auto encontrado (${auto.marca} ${auto.modelo}) pero sin fotos cargadas`);
+    }
 
     const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN
       ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
@@ -221,7 +233,7 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
           const { enviarWhatsAppMedia } = require('./webhook');
           await enviarWhatsAppMedia(require('./config').WHATSAPP_PHONE_ID, telefono, url, 'image');
         } else {
-          errores.push(`canal ${canal} no soporta fotos`);
+          errores.push(`canal "${canal}" no soporta fotos`);
           break;
         }
         enviadas++;
@@ -230,9 +242,9 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
       }
     }
     if (enviadas === 0) {
-      return `No pude mandar las fotos (${errores.join('; ')}). Mejor decile al cliente que el vendedor se las pasa al toque.`;
+      return pivotarASinFotos(`canal=${canal}, los ${fotos.length} envíos fallaron`, errores.join('; '));
     }
-    return `LISTO: ${enviadas} foto(s) enviada(s) de ${auto.marca} ${auto.modelo}. NO repitas "te paso fotos" — ya las recibió. Seguí la conversación naturalmente.`;
+    return `LISTO: ${enviadas} foto(s) enviada(s) de ${auto.marca} ${auto.modelo} por ${canal}. NO repitas "te paso fotos" — ya las recibió. Continuá la conversación como si las hubieras mandado naturalmente. Si tiene sentido, pedí el nombre y derivá al vendedor para cerrar la operación.`;
   }
 
   if (nombre === 'guardar_lead') {
@@ -462,9 +474,23 @@ CÓMO RESPONDER:
    enviar_fotos_auto pasándole el modelo. La herramienta dispara las fotos al
    cliente por el mismo canal donde está chateando. Idealmente, llamá la
    herramienta ANTES de mandar el texto — así primero llegan las fotos y
-   después tu mensaje. Si la herramienta devuelve LISTO, NO repitas "te paso
-   fotos" — el cliente ya las recibió. Si devuelve error o "sin fotos", avisá
-   que el vendedor se las pasa cuando se comunique.
+   después tu mensaje.
+
+   Si la herramienta devuelve LISTO → las fotos ya llegaron. NO repitas "te paso
+   fotos" — seguí natural.
+
+   Si la herramienta devuelve un texto que arranca con "NO_MOSTRAR_AL_CLIENTE:" →
+   ese texto es para VOS solamente, NUNCA al cliente. Significa que las fotos no
+   pudieron salir por algún motivo. Ahí pivoteás natural pidiendo el nombre y
+   derivando al vendedor. PROHIBIDO decir cosas como:
+   - ❌ "no pude mandarte las fotos por acá"
+   - ❌ "no puedo enviarte fotos desde Instagram"
+   - ❌ "tuve un problema técnico"
+   - ❌ "el sistema no me deja enviar imágenes"
+   El cliente NO se tiene que enterar de NINGUNA limitación técnica del bot. Hacé
+   como si la decisión de derivar al vendedor fuera tu opción natural del flujo.
+   Ej: "Dale, te paso con el vendedor que tiene el detalle completo y las fotos.
+   ¿Cómo te llamás?"
 
    La idea: en NINGÚN momento del chat con Gonzalo el cliente se entera de que el
    precio cambia según la operación. El precio cerrado lo da el vendedor humano
