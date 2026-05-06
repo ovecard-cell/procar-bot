@@ -1156,6 +1156,42 @@ app.post('/api/setup-routing', (req, res) => {
 });
 
 // Reset de contraseñas a las defaults (admin) — útil para arrancar
+// Backfill de nombres: para cada cliente sin nombre, intenta consultar la
+// Graph API de Meta. Util para limpiar datos viejos. Devuelve resumen.
+app.get('/api/admin/backfill-nombres', async (req, res) => {
+  try {
+    const { db, guardarLead } = require('./database');
+    const { obtenerPerfilMeta } = require('./webhook');
+    // Buscamos todos los clientes que tienen telefono numerico largo (PSID/IGSID)
+    // y no tienen nombre. Limitamos a 50 por llamada para no saturar la API.
+    const candidatos = db.prepare(`
+      SELECT c.telefono, c.canal
+      FROM (
+        SELECT DISTINCT telefono, canal FROM conversaciones
+        WHERE canal IN ('messenger', 'instagram', 'facebook')
+      ) AS c
+      LEFT JOIN clientes cl ON cl.telefono = c.telefono
+      WHERE cl.nombre IS NULL OR cl.nombre = ''
+      LIMIT 50
+    `).all();
+    let actualizados = 0, sinExito = 0;
+    const resultados = [];
+    for (const c of candidatos) {
+      const nombre = await obtenerPerfilMeta(c.canal, c.telefono);
+      if (nombre) {
+        guardarLead({ telefono: c.telefono, nombre, canal: c.canal });
+        actualizados++;
+        resultados.push({ telefono: c.telefono, canal: c.canal, nombre });
+      } else {
+        sinExito++;
+      }
+    }
+    res.json({ revisados: candidatos.length, actualizados, sin_exito: sinExito, muestra: resultados.slice(0, 20) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Diagnostico: lista los ultimos N telefonos que escribieron, con canal y
 // un fragmento del ultimo mensaje. Sirve para encontrar el telefono exacto
 // (sender_id) con que esta guardada una conversacion en la DB.

@@ -220,6 +220,10 @@ function manejarEcho({ canal, messaging }) {
 }
 
 async function manejarMensajeMeta({ canal, senderId, message, enviar }) {
+  // Resolver nombre del cliente (en background — no bloqueamos la respuesta).
+  // Solo se hace una vez por sender (cache + check DB).
+  asegurarNombreCliente(canal, senderId).catch(() => {});
+
   // Caso 1: tiene attachments (imágenes / audios / videos / archivos)
   if (Array.isArray(message.attachments) && message.attachments.length > 0) {
     const guardados = [];
@@ -567,6 +571,67 @@ async function enviarWhatsApp(phoneId, destinatario, texto) {
 // fingerprint de respaldo.
 const BOT_METADATA = 'procar-bot-v1';
 
+// Cache de telefonos a los que ya intentamos resolver el nombre. Evita pegarle
+// a la API de Meta en cada mensaje. Aun si Meta rechazó (sin permisos),
+// guardamos para no reintentar todo el día.
+const PERFILES_CONSULTADOS = new Set();
+
+// Llama a la Graph API de Meta para obtener el nombre del usuario que escribió.
+// Devuelve string con el nombre o null si no pudo.
+async function obtenerPerfilMeta(canal, senderId) {
+  if (!senderId) return null;
+  try {
+    if (canal === 'instagram') {
+      // Instagram: con INSTAGRAM_ACCESS_TOKEN usamos graph.instagram.com.
+      // Sin él, fallback a graph.facebook.com.
+      const token = config.INSTAGRAM_ACCESS_TOKEN || config.META_ACCESS_TOKEN;
+      const baseUrl = config.INSTAGRAM_ACCESS_TOKEN
+        ? `https://graph.instagram.com/v21.0/${senderId}`
+        : `https://graph.facebook.com/v19.0/${senderId}`;
+      const r = await axios.get(baseUrl, {
+        params: { fields: 'name,username', access_token: token },
+        timeout: 5000,
+      });
+      const nombre = r.data?.name || r.data?.username || null;
+      return nombre ? String(nombre).trim() : null;
+    }
+
+    if (canal === 'messenger' || canal === 'facebook') {
+      // Messenger PSID — necesita Page Access Token con scope pages_messaging.
+      const r = await axios.get(`https://graph.facebook.com/v19.0/${senderId}`, {
+        params: { fields: 'first_name,last_name', access_token: config.META_ACCESS_TOKEN },
+        timeout: 5000,
+      });
+      const partes = [r.data?.first_name, r.data?.last_name].filter(Boolean);
+      return partes.length ? partes.join(' ').trim() : null;
+    }
+  } catch (err) {
+    const meta = err.response?.data?.error;
+    console.log(`[Perfil ${canal}] no pude resolver nombre de ${senderId}: ${meta?.message || err.message}`);
+    return null;
+  }
+  return null;
+}
+
+// Wrapper que consulta UNA sola vez por sender (cache + check DB) y si encuentra
+// el nombre lo guarda en clientes vía guardarLead. Silencioso ante fallos.
+async function asegurarNombreCliente(canal, senderId) {
+  if (!senderId || PERFILES_CONSULTADOS.has(senderId)) return;
+  PERFILES_CONSULTADOS.add(senderId);
+  try {
+    const { db, guardarLead } = require('./database');
+    const ya = db.prepare('SELECT nombre FROM clientes WHERE telefono = ?').get(senderId);
+    if (ya?.nombre && ya.nombre.trim()) return; // ya tiene nombre, no necesitamos pedirlo
+    const nombre = await obtenerPerfilMeta(canal, senderId);
+    if (nombre) {
+      guardarLead({ telefono: senderId, nombre, canal });
+      console.log(`[Perfil ${canal}] nombre guardado para ${senderId}: "${nombre}"`);
+    }
+  } catch (err) {
+    console.error(`[asegurarNombreCliente] ${err.message}`);
+  }
+}
+
 // Cache de mensajes que el bot envió recientemente: clave "recipient::text" → ts.
 // Cuando llega un echo, si el (recipient, text) matchea algo enviado en los
 // últimos 60s, sabemos que es nuestro echo y lo ignoramos sin pausar.
@@ -742,4 +807,5 @@ module.exports = {
   enviarMessengerMedia,
   enviarInstagramMedia,
   enviarWhatsAppMedia,
+  obtenerPerfilMeta,
 };
