@@ -287,6 +287,43 @@ function verificarWebhook(req, res) {
 // RECIBIR MENSAJES (WhatsApp, Instagram, Messenger)
 // ─────────────────────────────────────────────
 
+// Cache en memoria de mids ya procesados, con TTL. Meta reintenta el mismo
+// evento varias veces (especialmente en Instagram), o manda dups con el mismo
+// mid en el mismo segundo. Sin esto el bot responde 2-3 veces al mismo mensaje.
+const MID_CACHE = new Map();         // mid → timestamp ms
+const MID_TTL_MS = 5 * 60 * 1000;    // 5 minutos
+function midYaProcesado(mid) {
+  if (!mid) return false;
+  const ahora = Date.now();
+  // Limpieza oportunista: cada llamada borra entradas expiradas
+  for (const [k, ts] of MID_CACHE) {
+    if (ahora - ts > MID_TTL_MS) MID_CACHE.delete(k);
+  }
+  if (MID_CACHE.has(mid)) return true;
+  MID_CACHE.set(mid, ahora);
+  return false;
+}
+
+// Saca todos los mids posibles del body (uno por canal y formato).
+function extraerMidsDelBody(body) {
+  const mids = [];
+  const entry = body?.entry?.[0];
+  if (!entry) return mids;
+
+  // WhatsApp Cloud API: entry.changes[0].value.messages[0].id
+  const wa = entry.changes?.[0]?.value?.messages?.[0]?.id;
+  if (wa) mids.push(wa);
+
+  // Messenger / Instagram (formato A): entry.messaging[0].message.mid
+  const m = entry.messaging?.[0]?.message?.mid;
+  if (m) mids.push(m);
+
+  // Instagram formato B: entry.changes[0].value.messages[0].id (mismo que WA)
+  // ya cubierto arriba.
+
+  return mids;
+}
+
 async function recibirMensaje(req, res) {
   res.sendStatus(200);
 
@@ -299,6 +336,16 @@ async function recibirMensaje(req, res) {
 
   try {
     const body = req.body;
+
+    // Dedupe por mid: Meta puede mandar el mismo evento 2-3 veces. Si ya lo
+    // procesamos en los últimos 5 min, ignoramos.
+    const mids = extraerMidsDelBody(body);
+    for (const mid of mids) {
+      if (midYaProcesado(mid)) {
+        console.log(`[Webhook] DUP ignorado mid=${mid} (Meta reintento)`);
+        return;
+      }
+    }
 
     // ── WhatsApp ──
     if (body.object === 'whatsapp_business_account') {
