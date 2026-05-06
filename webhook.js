@@ -356,7 +356,29 @@ async function recibirMensaje(req, res) {
       const entry    = body.entry?.[0];
       const messaging = entry?.messaging?.[0];
 
-      if (!messaging?.message) return;
+      if (!messaging) return;
+
+      // Capturar referral del anuncio (ads-to-Instagram-direct).
+      const refIg = messaging.referral || messaging.message?.referral;
+      if (refIg) {
+        const senderRef = messaging.sender?.id;
+        if (senderRef) {
+          const partes = [];
+          if (refIg.ad_id) partes.push(`ad_id=${refIg.ad_id}`);
+          if (refIg.ref) partes.push(`ref=${refIg.ref}`);
+          if (refIg.source) partes.push(`source=${refIg.source}`);
+          try {
+            guardarMensaje({
+              telefono: senderRef, rol: 'assistant',
+              contenido: `[cliente vino de un anuncio: ${partes.join(', ')}]`,
+              canal: 'instagram', tipo: 'texto',
+            });
+            console.log(`[Instagram] Referral capturado: ${partes.join(', ')}`);
+          } catch { /* noop */ }
+        }
+      }
+
+      if (!messaging.message) return;
 
       if (messaging.message.is_echo) {
         manejarEcho({ canal: 'instagram', messaging });

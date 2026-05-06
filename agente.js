@@ -746,6 +746,70 @@ function contextoTemporal() {
   return `\n\nCONTEXTO TEMPORAL (importante para saber si estás dentro del horario de los vendedores):\nFecha y hora actual en Argentina: ${ahora}.`;
 }
 
+// Escanea el historial de la conversación buscando referencias al auto que le
+// interesa al cliente. Sirve para que Gonzalo NO pregunte "¿de qué auto?" cuando
+// el contexto ya está disponible (saludo automático del anuncio, publicación
+// que respondió el cliente, marca/modelo que mencionó él mismo, etc.).
+//
+// Orden de prioridad:
+//  1. Marcadores explícitos que guardamos en webhook.js: [publicación: X],
+//     [cliente vino de un anuncio: ...]
+//  2. Mención de un modelo conocido del mercado argentino + año cercano si lo hay
+//
+// Devuelve un string con el auto detectado o null si no encontró nada confiable.
+const MODELOS_AUTOS_REGEX = /\b(corolla|hilux|etios|yaris|gol\s*trend|gol|virtus|vento|polo|fox|voyage|suran|amarok|up|t[\s-]?cross|taos|saveiro|nivus|onix|cobalt|spin|cruze|tracker|prisma|aveo|s10|captiva|trailblazer|cronos|argo|toro|mobi|strada|palio|siena|uno|500|ka|fiesta|focus|ecosport|ranger|territory|bronco|sandero|logan|stepway|duster|kangoo|kwid|captur|koleos|alaskan|208|2008|3008|408|partner|c3|c4|c5|berlingo|versa|march|frontier|kicks|x[\s-]?trail|sentra|city|civic|hr[\s-]?v|cr[\s-]?v|fit|accent|tucson|creta|rio|cerato|sportage|seltos|renegade|compass|cherokee|wrangler|wave|glh|ybr|tornado|titan|rouser|xr)\b/i;
+
+function extraerAutoDelHistorial(historial) {
+  if (!Array.isArray(historial) || historial.length === 0) return null;
+
+  // 1) Marcadores explícitos guardados por webhook.js — son lo más confiable.
+  for (const m of historial) {
+    const c = (m.contenido || '').trim();
+    if (!c) continue;
+    const pub = c.match(/\[publicaci[oó]n:\s*([^\]]+?)\]/i);
+    if (pub && pub[1].trim()) return pub[1].trim();
+  }
+
+  // 2) Buscar mención de modelo conocido en cualquier mensaje (cliente o bot).
+  //    Si aparece junto a un año plausible (2005-2030), lo concatenamos.
+  for (const m of historial) {
+    const c = (m.contenido || '').trim();
+    if (!c) continue;
+    const matchModelo = c.match(MODELOS_AUTOS_REGEX);
+    if (!matchModelo) continue;
+    const modelo = matchModelo[0];
+    // Buscamos un año en la misma frase (hasta 60 chars alrededor del match)
+    const idx = matchModelo.index || 0;
+    const ventana = c.slice(Math.max(0, idx - 30), Math.min(c.length, idx + 60));
+    const matchYear = ventana.match(/\b(20[0-2]\d)\b/);
+    return matchYear ? `${modelo} ${matchYear[1]}` : modelo;
+  }
+
+  // 3) Si solo tenemos el marcador genérico de anuncio sin modelo, lo señalamos
+  //    así Gonzalo al menos sabe que vino de una publi (aunque no de cuál).
+  const vinoDeAd = historial.some(m => /\[cliente vino de un anuncio/i.test(m.contenido || ''));
+  if (vinoDeAd) return '__SIN_MODELO_PERO_DESDE_ANUNCIO__';
+
+  return null;
+}
+
+// Genera el bloque de system prompt con el auto detectado (si lo hay), para
+// inyectarlo en cada llamada al LLM y evitar que Gonzalo pregunte "¿de qué auto?".
+function contextoAutoDetectado(telefono) {
+  try {
+    const historial = obtenerHistorial(telefono);
+    const detectado = extraerAutoDelHistorial(historial);
+    if (!detectado) return '';
+    if (detectado === '__SIN_MODELO_PERO_DESDE_ANUNCIO__') {
+      return `\n\nCONTEXTO DE ORIGEN: el cliente vino respondiendo un anuncio nuestro pero no tenemos el modelo capturado en el historial. Si el primer mensaje del cliente es vago ("info?", "precio?"), pedile que te diga el modelo o mande foto, sin asumir cuál es.`;
+    }
+    return `\n\nCONTEXTO DEL AUTO QUE INTERESA AL CLIENTE: el historial indica que el cliente está consultando por "${detectado}". NO preguntes "¿de qué auto me hablás?" — arrancá la conversación hablando directamente de ese auto. Si necesitás confirmar disponibilidad, usá la herramienta buscar_inventario con ese modelo. Si el cliente menciona DESPUÉS un auto distinto, ahí sí cambiá el foco.`;
+  } catch (err) {
+    console.error('[contextoAutoDetectado] error:', err.message);
+    return '';
+  }
+}
+
 // Si el cliente ya tiene un vendedor asignado, le decimos a Gonzalo quién es,
 // para que cuando el cliente sigue escribiendo fuera de horario le diga
 // algo concreto del estilo "Facu ya cerró, mañana de 9 te sigue atendiendo"
@@ -809,7 +873,7 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
   let respuesta = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 1024,
-    system: SYSTEM_PROMPT + contextoTemporal() + contextoConversacion(telefono),
+    system: SYSTEM_PROMPT + contextoTemporal() + contextoConversacion(telefono) + contextoAutoDetectado(telefono),
     tools: herramientas,
     messages: mensajes
   });
