@@ -639,6 +639,7 @@ async function enviarMessenger(recipientId, texto) {
 async function enviarMessengerMedia(recipientId, urlPublica, tipo) {
   // tipo: 'image' o 'video'
   try {
+    console.log(`[Messenger] enviando ${tipo} a ${recipientId} url=${urlPublica}`);
     await axios.post(
       `https://graph.facebook.com/v19.0/me/messages`,
       {
@@ -657,10 +658,14 @@ async function enviarMessengerMedia(recipientId, urlPublica, tipo) {
         },
       }
     );
-    console.log(`[Messenger] ${tipo} enviado a ${recipientId}: ${urlPublica}`);
+    console.log(`[Messenger] ${tipo} enviado OK a ${recipientId}`);
   } catch (err) {
     describirErrorMeta(err, `enviarMessengerMedia(${tipo}) a ${recipientId}`);
-    throw err;
+    const metaMsg = err.response?.data?.error?.message || err.message;
+    const metaCode = err.response?.data?.error?.code || err.response?.status;
+    const e = new Error(`MSG_${metaCode}: ${metaMsg}`);
+    e.original = err;
+    throw e;
   }
 }
 
@@ -669,24 +674,32 @@ async function enviarInstagramMedia(recipientId, urlPublica, tipo) {
   const url = config.INSTAGRAM_ACCESS_TOKEN
     ? `https://graph.instagram.com/v21.0/me/messages`
     : `https://graph.facebook.com/v19.0/me/messages`;
-  try {
-    await axios.post(
-      url,
-      {
-        recipient: { id: recipientId },
-        message: {
-          attachment: {
-            type: tipo,
-            payload: { url: urlPublica, is_reusable: true },
-          },
-        },
+  // Instagram messaging API NO soporta is_reusable (es de Messenger/FB).
+  // Mandar solo url limpio.
+  const payload = {
+    recipient: { id: recipientId },
+    message: {
+      attachment: {
+        type: tipo,
+        payload: { url: urlPublica },
       },
-      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
-    );
-    console.log(`[Instagram] ${tipo} enviado a ${recipientId}: ${urlPublica}`);
+    },
+  };
+  try {
+    console.log(`[Instagram] enviando ${tipo} a ${recipientId} url=${urlPublica}`);
+    await axios.post(url, payload, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    console.log(`[Instagram] ${tipo} enviado OK a ${recipientId}`);
   } catch (err) {
     describirErrorMeta(err, `enviarInstagramMedia(${tipo}) a ${recipientId}`);
-    throw err;
+    // Re-lanzo con mensaje rico (incluye el motivo real de Meta) para que el
+    // tool result pueda registrarlo en logs y diagnostico.
+    const metaMsg = err.response?.data?.error?.message || err.message;
+    const metaCode = err.response?.data?.error?.code || err.response?.status;
+    const e = new Error(`IG_${metaCode}: ${metaMsg}`);
+    e.original = err;
+    throw e;
   }
 }
 

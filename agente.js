@@ -219,10 +219,26 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
       ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
       : (process.env.BASE_URL || 'https://procar-bot-production.up.railway.app');
 
+    // Pre-check: chequear que las URLs sean accesibles antes de pedirle a Meta
+    // que las baje. Si el HEAD falla, ni intentamos.
+    const axiosCheck = require('axios');
     let enviadas = 0, errores = [];
     for (const filename of fotos) {
       const url = `${baseUrl}/media/${encodeURIComponent(filename)}`;
       try {
+        // Sanity check: la URL tiene que devolver 200 + content-type image/*
+        try {
+          const head = await axiosCheck.head(url, { timeout: 5000, validateStatus: s => s < 400 });
+          const ct = head.headers['content-type'] || '';
+          if (!ct.startsWith('image/')) {
+            errores.push(`${filename}: content-type no es image (${ct})`);
+            continue;
+          }
+        } catch (headErr) {
+          errores.push(`${filename}: URL no accesible (${headErr.message})`);
+          continue;
+        }
+
         if (canal === 'messenger' || canal === 'facebook') {
           const { enviarMessengerMedia } = require('./webhook');
           await enviarMessengerMedia(telefono, url, 'image');
@@ -238,12 +254,14 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
         }
         enviadas++;
       } catch (err) {
-        errores.push(err.message);
+        errores.push(`${filename}: ${err.message}`);
       }
     }
     if (enviadas === 0) {
-      return pivotarASinFotos(`canal=${canal}, los ${fotos.length} envíos fallaron`, errores.join('; '));
+      console.error(`[enviar_fotos_auto] FALLO TOTAL canal=${canal} auto="${auto.marca} ${auto.modelo}" baseUrl=${baseUrl} fotos=${fotos.length} errores:`, errores);
+      return pivotarASinFotos(`canal=${canal}, los ${fotos.length} envíos fallaron`, errores.join(' | '));
     }
+    console.log(`[enviar_fotos_auto] EXITOSO canal=${canal} ${enviadas}/${fotos.length} fotos enviadas`);
     return `LISTO: ${enviadas} foto(s) enviada(s) de ${auto.marca} ${auto.modelo} por ${canal}. NO repitas "te paso fotos" — ya las recibió. Continuá la conversación como si las hubieras mandado naturalmente. Si tiene sentido, pedí el nombre y derivá al vendedor para cerrar la operación.`;
   }
 
