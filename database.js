@@ -192,6 +192,23 @@ function setSetting(key, value) {
 // INVENTARIO
 // ─────────────────────────────────────────────
 
+// Tokeniza una búsqueda de modelo: saca años, kms, palabras vacías, y deja solo
+// las palabras significativas. Así "Amarok 2017" → ["amarok"]; "Gol Trend 2018
+// 80mil" → ["gol", "trend"]; "Corolla XEI Pack Cuero AT 85 mil km 2018" →
+// ["corolla", "xei", "pack", "cuero", "at"]
+function tokenizarModelo(texto) {
+  if (!texto) return [];
+  const stopwords = new Set(['mil', 'km', 'kms', 'kilometros', 'kilómetros', 'modelo', 'año', 'el', 'la', 'los', 'las', 'un', 'una', 'de', 'del']);
+  return String(texto)
+    .toLowerCase()
+    .replace(/[^a-z0-9áéíóúñü\s]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t.length > 1)
+    .filter(t => !/^\d+$/.test(t))           // años, números sueltos
+    .filter(t => !/^\d+(mil|k)$/.test(t))    // "80mil", "80k"
+    .filter(t => !stopwords.has(t));
+}
+
 function buscarAutos({ presupuesto_max, combustible, transmision, marca, modelo } = {}) {
   let query = 'SELECT * FROM autos WHERE disponible = 1';
   const params = [];
@@ -209,12 +226,32 @@ function buscarAutos({ presupuesto_max, combustible, transmision, marca, modelo 
     params.push(transmision);
   }
   if (marca) {
-    query += ' AND LOWER(marca) LIKE LOWER(?)';
-    params.push(`%${marca}%`);
+    // Marca: tokenizamos también por si dicen "VW Amarok" pero la marca está como "Volkswagen"
+    const tokens = tokenizarModelo(marca);
+    if (tokens.length) {
+      // Cualquier token de la marca debe coincidir
+      query += ' AND (' + tokens.map(() => 'LOWER(marca) LIKE LOWER(?)').join(' OR ') + ')';
+      tokens.forEach(t => params.push(`%${t}%`));
+    } else {
+      query += ' AND LOWER(marca) LIKE LOWER(?)';
+      params.push(`%${marca}%`);
+    }
   }
   if (modelo) {
-    query += ' AND LOWER(modelo) LIKE LOWER(?)';
-    params.push(`%${modelo}%`);
+    // Tokenizamos el modelo y buscamos cada palabra significativa en marca O modelo.
+    // Así "Amarok 2017" → busca "amarok" en marca o modelo. Matchea Volkswagen Amarok.
+    // "Corolla XEI" → busca corolla Y xei en marca/modelo combinados. Matchea Toyota Corolla XEI.
+    const tokens = tokenizarModelo(modelo);
+    if (tokens.length) {
+      // Al menos UN token tiene que matchear marca o modelo (criterio amplio).
+      // Después el LLM ve los resultados y decide si sirven.
+      const ors = tokens.map(() => '(LOWER(marca) LIKE LOWER(?) OR LOWER(modelo) LIKE LOWER(?))').join(' OR ');
+      query += ` AND (${ors})`;
+      tokens.forEach(t => { params.push(`%${t}%`); params.push(`%${t}%`); });
+    } else {
+      query += ' AND LOWER(modelo) LIKE LOWER(?)';
+      params.push(`%${modelo}%`);
+    }
   }
 
   query += ' ORDER BY precio ASC';
