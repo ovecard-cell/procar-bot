@@ -1156,6 +1156,53 @@ app.post('/api/setup-routing', (req, res) => {
 });
 
 // Reset de contraseñas a las defaults (admin) — útil para arrancar
+// Diagnostico: lista los ultimos N telefonos que escribieron, con canal y
+// un fragmento del ultimo mensaje. Sirve para encontrar el telefono exacto
+// (sender_id) con que esta guardada una conversacion en la DB.
+app.get('/api/admin/debug-conversaciones', (req, res) => {
+  try {
+    const { db } = require('./database');
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const filas = db.prepare(`
+      SELECT telefono, canal, MAX(creado_en) as ultimo,
+             (SELECT contenido FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as ultimo_msg
+      FROM conversaciones c
+      GROUP BY telefono
+      ORDER BY ultimo DESC
+      LIMIT ?
+    `).all(limit);
+    res.json({
+      total: filas.length,
+      conversaciones: filas.map(f => ({
+        telefono: f.telefono,
+        telefono_len: String(f.telefono).length,
+        canal: f.canal,
+        ultimo: f.ultimo,
+        ultimo_msg: (f.ultimo_msg || '').slice(0, 120),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Diagnostico: busca un telefono en la DB con LIKE para encontrar matches
+// parciales (util si tenes un fragmento del sender_id).
+app.get('/api/admin/debug-buscar/:fragmento', (req, res) => {
+  try {
+    const { db } = require('./database');
+    const frag = req.params.fragmento;
+    const filas = db.prepare(`
+      SELECT DISTINCT telefono, canal FROM conversaciones
+      WHERE telefono LIKE ?
+      LIMIT 20
+    `).all(`%${frag}%`);
+    res.json({ buscado: frag, encontrados: filas });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Diagnostico: para una conversacion dada, devuelve qué auto detecta
 // extraerAutoDelHistorial y el bloque de system prompt que se inyectaria.
 // Sirve para verificar en vivo que el fix de contexto está corriendo.

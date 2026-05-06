@@ -253,7 +253,7 @@ async function manejarMensajeMeta({ canal, senderId, message, enviar }) {
   // Caso 2: mensaje de texto puro
   if (typeof message.text === 'string' && message.text.trim()) {
     const texto = message.text;
-    console.log(`[${canal}] Mensaje de ${senderId}: ${texto}`);
+    console.log(`[${canal}] INBOUND sender_id="${senderId}" (type=${typeof senderId}, len=${String(senderId).length}) texto="${texto}"`);
     const respuesta = await procesarMensaje(senderId, texto, canal);
     if (respuesta) await enviar(senderId, respuesta);
     return;
