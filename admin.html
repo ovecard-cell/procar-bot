@@ -197,6 +197,12 @@
       <span>Conversaciones</span>
       <span id="contadorEsperando" class="contador-esperando" style="display:none"></span>
     </h2>
+    <div id="filtroVendedorActivo" style="display:none; margin:0 0 10px; padding:8px 12px; background:#2a2515; border:1px solid #C9A84C; border-radius:8px; align-items:center; justify-content:space-between; gap:10px;">
+      <div style="font-size:0.78rem; color:#ddd;">
+        Filtrando por: <strong id="filtroVendedorNombre" style="color:#C9A84C;">—</strong>
+      </div>
+      <button id="btnLimpiarFiltro" type="button" style="background:#e63946; color:#fff; border:none; padding:4px 10px; border-radius:6px; cursor:pointer; font-size:0.75rem; font-weight:600; display:flex; align-items:center; gap:4px;" title="Limpiar filtro y ver todas">✕ Limpiar</button>
+    </div>
     <div class="lista" id="lista"><div class="vacio">Cargando...</div></div>
   </div>
   <div class="panel">
@@ -683,6 +689,26 @@
 
   // === RESUMEN POR VENDEDOR (tarjetas del tope) ===
   let filtroVendedor = null; // si está seteado, cargarConversaciones filtra por este vendedor
+
+  // Sincroniza el chip "Filtrando por: X" con el estado actual del filtro.
+  function actualizarChipFiltro() {
+    const chip = document.getElementById('filtroVendedorActivo');
+    const nombreEl = document.getElementById('filtroVendedorNombre');
+    if (filtroVendedor) {
+      chip.style.display = 'flex';
+      nombreEl.textContent = filtroVendedor;
+    } else {
+      chip.style.display = 'none';
+    }
+  }
+
+  // Botón X del chip → limpia el filtro y refresca todo.
+  document.getElementById('btnLimpiarFiltro').addEventListener('click', () => {
+    filtroVendedor = null;
+    actualizarChipFiltro();
+    cargarConversaciones();
+    cargarResumenVendedores();
+  });
   async function cargarResumenVendedores() {
     try {
       const r = await fetch('/api/vendedores/resumen');
@@ -734,6 +760,7 @@
           } else {
             filtroVendedor = nombre;
           }
+          actualizarChipFiltro();
           cargarConversaciones();
           cargarResumenVendedores();
           document.querySelector('.layout')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
