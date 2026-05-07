@@ -199,7 +199,7 @@ function setSetting(key, value) {
 function tokenizarModelo(texto) {
   if (!texto) return [];
   const stopwords = new Set(['mil', 'km', 'kms', 'kilometros', 'kilómetros', 'modelo', 'año', 'el', 'la', 'los', 'las', 'un', 'una', 'de', 'del']);
-  return String(texto)
+  const tokens = String(texto)
     .toLowerCase()
     .replace(/[^a-z0-9áéíóúñü\s]/g, ' ')
     .split(/\s+/)
@@ -207,6 +207,10 @@ function tokenizarModelo(texto) {
     .filter(t => !/^\d+$/.test(t))           // años, números sueltos
     .filter(t => !/^\d+(mil|k)$/.test(t))    // "80mil", "80k"
     .filter(t => !stopwords.has(t));
+  // Capeamos a 50 tokens para no reventar el límite de parámetros de SQLite
+  // si el cliente nos manda una ficha técnica entera. Cada token genera 2 params
+  // (marca-LIKE OR modelo-LIKE), y 50 ya es más que suficiente para matchear.
+  return tokens.slice(0, 50);
 }
 
 function buscarAutos({ presupuesto_max, combustible, transmision, marca, modelo } = {}) {
@@ -255,7 +259,10 @@ function buscarAutos({ presupuesto_max, combustible, transmision, marca, modelo 
   }
 
   query += ' ORDER BY precio ASC';
-  return db.prepare(query).all(...params);
+  // IMPORTANTE: pasamos por parsearFotos para que data.fotos sea un array real
+  // (la columna en DB es JSON-string). Sin esto, enviar_fotos_auto recibe la
+  // string cruda y .slice(0,4) la trata como string → "filenames" = '[','"','1','7'.
+  return db.prepare(query).all(...params).map(parsearFotos);
 }
 
 // ─────────────────────────────────────────────
@@ -517,6 +524,21 @@ function obtenerAutoPorIdExterno(idExterno) {
   return fila ? parsearFotos(fila) : null;
 }
 
+// Match laxo por marca+modelo (case-insensitive, trim) y año si vino. Lo usamos
+// como red de seguridad cuando una fila del Excel no trae id_externo: puede ser
+// un auto que ya existe pero el user olvidó completar la columna ID.
+function obtenerAutoPorMarcaModeloAnio(marca, modelo, anio) {
+  if (!marca || !modelo) return null;
+  const m = String(marca).trim().toLowerCase();
+  const mo = String(modelo).trim().toLowerCase();
+  let query = 'SELECT * FROM autos WHERE LOWER(TRIM(marca)) = ? AND LOWER(TRIM(modelo)) = ?';
+  const params = [m, mo];
+  if (anio) { query += ' AND anio = ?'; params.push(parseInt(anio, 10)); }
+  query += ' LIMIT 1';
+  const fila = db.prepare(query).get(...params);
+  return fila ? parsearFotos(fila) : null;
+}
+
 function eliminarAuto(id) {
   db.prepare('DELETE FROM autos WHERE id = ?').run(id);
 }
@@ -775,6 +797,7 @@ module.exports = {
   listarInventario,
   obtenerAuto,
   obtenerAutoPorIdExterno,
+  obtenerAutoPorMarcaModeloAnio,
   crearAuto,
   actualizarAuto,
   cambiarEstadoAuto,

@@ -219,25 +219,19 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
       ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
       : (process.env.BASE_URL || 'https://procar-bot-production.up.railway.app');
 
-    // Pre-check: chequear que las URLs sean accesibles antes de pedirle a Meta
-    // que las baje. Si el HEAD falla, ni intentamos.
-    const axiosCheck = require('axios');
+    // Pre-check: el archivo tiene que existir físicamente en MEDIA_DIR (el mismo
+    // dir que sirve /media). Si no existe, ni siquiera intentamos pedirle a Meta
+    // que lo baje — sería 404 garantizado. Esto reemplaza al HEAD anterior que
+    // pegaba contra la red (más lento y a veces falseaba positivos por caché).
     let enviadas = 0, errores = [];
     for (const filename of fotos) {
       const url = `${baseUrl}/media/${encodeURIComponent(filename)}`;
+      const rutaLocal = path.join(MEDIA_DIR, filename);
+      if (!fs.existsSync(rutaLocal)) {
+        errores.push(`${filename}: archivo no existe en MEDIA_DIR (URL=${url}, ruta=${rutaLocal})`);
+        continue;
+      }
       try {
-        // Sanity check: la URL tiene que devolver 200 + content-type image/*
-        try {
-          const head = await axiosCheck.head(url, { timeout: 5000, validateStatus: s => s < 400 });
-          const ct = head.headers['content-type'] || '';
-          if (!ct.startsWith('image/')) {
-            errores.push(`${filename}: content-type no es image (${ct})`);
-            continue;
-          }
-        } catch (headErr) {
-          errores.push(`${filename}: URL no accesible (${headErr.message})`);
-          continue;
-        }
 
         if (canal === 'messenger' || canal === 'facebook') {
           const { enviarMessengerMedia } = require('./webhook');
@@ -968,12 +962,27 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
   }
 
   const historial = obtenerHistorial(telefono);
-  const mensajes = historial.map(filaAMensaje);
+  // Pasamos solo los últimos 10 mensajes a Claude para acotar el costo de input.
+  // El historial completo (20) sigue disponible para extraerAutoDelHistorial.
+  const mensajes = historial.slice(-10).map(filaAMensaje);
+  // La API de Claude exige que el último mensaje sea 'user'. Si por timestamps
+  // empatados, un rescate o un recordatorio reciente, el slice termina con
+  // 'assistant', recortamos hasta que el último sea user.
+  while (mensajes.length && mensajes[mensajes.length - 1].role === 'assistant') {
+    mensajes.pop();
+  }
+  if (!mensajes.length) {
+    console.warn(`[Agente] historial sin mensajes 'user' para ${telefono} — salgo sin llamar a la API`);
+    return null;
+  }
 
   let respuesta = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 1024,
-    system: SYSTEM_PROMPT + contextoTemporal() + contextoConversacion(telefono) + contextoAutoDetectado(telefono),
+    system: [
+      { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: contextoTemporal() + contextoConversacion(telefono) + contextoAutoDetectado(telefono) },
+    ],
     tools: herramientas,
     messages: mensajes
   });
@@ -998,7 +1007,10 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
     respuesta = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
-      system: SYSTEM_PROMPT + contextoTemporal(),
+      system: [
+        { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: contextoTemporal() },
+      ],
       tools: herramientas,
       messages: mensajes
     });

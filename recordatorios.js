@@ -116,12 +116,35 @@ async function procesarRecordatorios() {
     // NO mandamos recordatorio. Sino el bot pisa lo que el vendedor escribió a mano.
     if (getSetting(`bot_pausado_${c.telefono}`, 'false') === 'true') continue;
 
-    const horasSinRespuesta = (ahora - new Date(c.ultimo_msg).getTime()) / HORA;
-    // Después de 23hs ya no mandamos nada (ventana de 24hs de Meta)
-    if (horasSinRespuesta >= 23) continue;
-
     const ultimoRec = c.ultimo_recordatorio ? JSON.parse(c.ultimo_recordatorio) : null;
     const ultimoTipo = ultimoRec?.tipo || null;
+
+    // Si ya marcamos la ventana como cerrada, no reintentamos hasta que el
+    // cliente vuelva a escribir (limpiarRecordatorios borra el flag).
+    if (ultimoTipo === 'ventana_cerrada') continue;
+
+    // Ventana de 24hs de Meta: se cuenta desde el ÚLTIMO MENSAJE DEL CLIENTE,
+    // no desde el último mensaje del bot. Si pasaron >=24h sin que el cliente
+    // escriba, Meta rechaza el envío con "fuera del período permitido".
+    const ultimoUser = db.prepare(
+      "SELECT creado_en FROM conversaciones WHERE telefono = ? AND rol = 'user' ORDER BY creado_en DESC LIMIT 1"
+    ).get(c.telefono);
+    if (!ultimoUser) continue;
+    const horasDesdeUser = (ahora - new Date(ultimoUser.creado_en).getTime()) / HORA;
+    if (horasDesdeUser >= 24) {
+      const valor = JSON.stringify({ tipo: 'ventana_cerrada', fecha: new Date().toISOString() });
+      db.prepare(`
+        INSERT INTO settings (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = ?
+      `).run(`recordatorio_${c.telefono}`, valor, valor);
+      console.log(`[Recordatorios] Ventana cerrada para ${c.telefono} (${horasDesdeUser.toFixed(1)}h desde último msg del cliente)`);
+      continue;
+    }
+
+    // Cadencia: contamos las horas desde el último mensaje DEL CLIENTE para
+    // que los pasos 2h/6h/18h tengan sentido (sino se gatillan apenas el bot
+    // contesta). horasSinRespuesta = horas desde que el cliente quedó callado.
+    const horasSinRespuesta = horasDesdeUser;
 
     // Encontrar el siguiente paso de la cadencia que corresponde según horas y último enviado
     // Elegimos cadencia según si ya hubo escalado a vendedor o no.
@@ -382,8 +405,15 @@ function iniciarCron() {
   // Antes acá tambien corria el rescate del bot (que reactivaba a Gonzalo si el
   // vendedor se colgaba). Lo sacamos: el dashboard ahora muestra alerta visual
   // al vendedor en vez de meter al bot a la conversacion.
+  // KILL SWITCH (2026-05-06): recordatorios al cliente desactivados temporalmente
+  // porque seguían quemando tokens del LLM y Meta rechazaba los envíos. Mientras
+  // diagnosticamos, dejamos solo la cola de notificaciones a vendedores y el
+  // ping al vendedor (no usa LLM, costo cero de Anthropic).
+  // cron.schedule('*/15 * * * *', () => {
+  //   procesarRecordatorios().catch(err => console.error('[Recordatorios] Crash:', err.message));
+  //   pingearVendedoresColgados().catch(err => console.error('[Ping vendedor] Crash:', err.message));
+  // });
   cron.schedule('*/15 * * * *', () => {
-    procesarRecordatorios().catch(err => console.error('[Recordatorios] Crash:', err.message));
     pingearVendedoresColgados().catch(err => console.error('[Ping vendedor] Crash:', err.message));
   });
   // Cada 5 minutos chequeamos la cola de notificaciones a vendedores. Es liviano:
@@ -391,7 +421,7 @@ function iniciarCron() {
   cron.schedule('*/5 * * * *', () => {
     procesarColaDeNotificacionesAVendedores().catch(err => console.error('[Cola WA] Crash:', err.message));
   });
-  console.log('[Recordatorios] Cron iniciado (recordatorios + ping vendedor cada 15min, cola WA cada 5min)');
+  console.log('[Recordatorios] Cron iniciado (RECORDATORIOS AL CLIENTE DESACTIVADOS — solo ping vendedor cada 15min y cola WA cada 5min)');
 }
 
 module.exports = { iniciarCron, procesarRecordatorios, limpiarRecordatorios, procesarColaDeNotificacionesAVendedores };

@@ -13,7 +13,7 @@
 //   "Vendido"/"Cerrado" → 'vendido'. Si esta vacio, default 'disponible'.
 // ─────────────────────────────────────────────
 const XLSX = require('xlsx');
-const { obtenerAutoPorIdExterno, listarInventario } = require('./database');
+const { obtenerAutoPorIdExterno, obtenerAutoPorMarcaModeloAnio, listarInventario } = require('./database');
 
 // Normaliza el nombre de una columna: minúsculas, sin acentos, sin espacios extras.
 function normCol(s) {
@@ -150,11 +150,27 @@ function categorizar(items) {
   const nuevos = [];
   const actualizados = []; // { id, antes, despues, cambios: [campo, antes, despues] }
   const sinCambios = [];
+  // Items sin id_externo en el Excel que matchean por marca+modelo+anio con un
+  // auto que ya existe en DB. Lo más probable: el user olvidó completar la
+  // columna ID. La UI les muestra esto y deja al user decidir: vincular con
+  // el existente (UPDATE, conserva fotos) o crear igual (INSERT, posible
+  // duplicado).
+  const posibles_duplicados = [];
 
   for (const item of items) {
-    const existente = item.id_externo
+    let existente = item.id_externo
       ? obtenerAutoPorIdExterno(item.id_externo)
       : null;
+
+    if (!existente && !item.id_externo) {
+      // Red de seguridad: buscamos un match laxo. Si lo hay, lo marcamos como
+      // "posible duplicado" con el id sugerido para vincular.
+      const match = obtenerAutoPorMarcaModeloAnio(item.marca, item.modelo, item.anio);
+      if (match) {
+        posibles_duplicados.push({ id: match.id, item, existente: match });
+        continue;
+      }
+    }
 
     if (!existente) {
       nuevos.push(item);
@@ -183,7 +199,7 @@ function categorizar(items) {
     else actualizados.push({ id: existente.id, item, cambios });
   }
 
-  return { nuevos, actualizados, sinCambios };
+  return { nuevos, actualizados, sinCambios, posibles_duplicados };
 }
 
 // Detecta autos que estaban en la DB con id_externo pero NO vinieron en el Excel.
