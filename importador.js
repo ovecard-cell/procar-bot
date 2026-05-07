@@ -38,6 +38,29 @@ const ALIASES = {
   link: ['linkmarketplace', 'link', 'url', 'enlace', 'publi'],
 };
 
+// Marcas que SOLO hacen motos (en el mercado argentino). Para Honda/Yamaha/
+// Suzuki/Kawasaki/BMW que tambien hacen autos, dependemos del campo TIPO.
+const MARCAS_MOTO_EXCLUSIVAS = new Set([
+  'zanella', 'motomel', 'corven', 'bajaj', 'ktm', 'beta', 'keller',
+  'jianshe', 'mondial', 'gilera', 'brava', 'guerrero', 'wuyang',
+  'royal enfield', 'harley-davidson', 'harley davidson', 'ducati',
+  'triumph', 'vespa', 'aprilia', 'benelli', 'cf moto', 'cfmoto',
+  'tvs', 'hero', 'piaggio', 'sym', 'kymco',
+]);
+
+// Decide si un item del Excel es moto. Prioridad:
+//   1. Si la columna TIPO/carroceria dice 'moto', 'motocicleta', 'scooter',
+//      'motoneta', 'cuatri/cuatriciclo' → ES moto.
+//   2. Si la marca esta en MARCAS_MOTO_EXCLUSIVAS → ES moto.
+//   3. Si nada matchea → es auto (default).
+function esMoto({ marca, carroceria }) {
+  const carr = String(carroceria || '').toLowerCase().trim();
+  if (/^(moto|motocicleta|motoneta|scooter|cuatri|cuatriciclo)/i.test(carr)) return true;
+  const m = String(marca || '').toLowerCase().trim();
+  if (MARCAS_MOTO_EXCLUSIVAS.has(m)) return true;
+  return false;
+}
+
 function detectarColumnas(headerRow) {
   const map = {};
   for (let i = 0; i < headerRow.length; i++) {
@@ -125,11 +148,18 @@ function parsearExcel(buffer) {
     if (precioNoCompartir) notas.push('No compartir precio con cliente');
     if (notas.length) descripcion = '⚠️ ' + notas.join(' · ');
 
+    const carroceriaRaw = (get(colMap.carroceria) || '').toString().trim() || null;
+    const tipo = esMoto({ marca, carroceria: carroceriaRaw }) ? 'moto' : 'auto';
+    // Si es moto, limpiamos carroceria — 'Moto' no es una carroceria real
+    // (Sedan, SUV, Pick-up, Hatchback son carrocerias; Moto es el tipo).
+    const carroceria = tipo === 'moto' ? null : carroceriaRaw;
+
     items.push({
       id_externo: id != null ? String(id).trim() : null,
+      tipo,
       marca,
       modelo,
-      carroceria: (get(colMap.carroceria) || '').toString().trim() || null,
+      carroceria,
       anio: parseInt(get(colMap.anio), 10) || null,
       color: (get(colMap.color) || '').toString().trim() || null,
       km: aNumero(km),
@@ -192,6 +222,7 @@ function categorizar(items) {
       const b = (valDB == null ? '' : String(valDB).trim());
       if (a !== b) cambios.push({ campo, antes: valDB, despues: valExcel });
     };
+    compararCampo('tipo', item.tipo, existente.tipo);
     compararCampo('marca', item.marca, existente.marca);
     compararCampo('modelo', item.modelo, existente.modelo);
     compararCampo('carroceria', item.carroceria, existente.carroceria);

@@ -166,6 +166,11 @@ function inicializarDB() {
   // de 'precio' que es el numero base/efectivo. Lo usa Gonzalo para responder
   // consultas de precio al contado y para anclar la negociacion de permuta.
   try { db.exec('ALTER TABLE autos ADD COLUMN precio_lista INTEGER'); } catch (e) { /* ya existe */ }
+  // Backfill one-shot (2026-05-07): los autos con id 30-35 fueron importados
+  // como 'auto' pero son motos. Es idempotente — si ya estan en 'moto', el
+  // UPDATE no afecta filas. Tambien limpiamos carroceria porque 'Moto' no
+  // es una carroceria (las carrocerias son Sedan/SUV/Pick-up/etc).
+  try { db.exec("UPDATE autos SET tipo = 'moto', carroceria = NULL WHERE id BETWEEN 30 AND 35 AND tipo != 'moto'"); } catch (e) { /* ignore */ }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
