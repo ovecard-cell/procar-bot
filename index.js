@@ -606,7 +606,10 @@ app.get('/api/inventario/exportar', (req, res) => {
     // importador apunta a 'carroceria', no a auto/moto — por eso usamos
     // 'TIPO' para carroceria y dejamos 'auto/moto' afuera (no afecta el match).
     const datos = filas.map(a => ({
-      ID: a.id_externo || '',
+      // Fallback al id autoincrement si no hay id_externo cargado: asi la
+      // columna nunca sale vacia y el round-trip funciona (el importador
+      // tiene un fallback que matchea por DB id cuando id_externo no existe).
+      ID: a.id_externo || a.id,
       MARCA: a.marca || '',
       MODELO: a.modelo || '',
       TIPO: a.carroceria || '',
@@ -622,6 +625,21 @@ app.get('/api/inventario/exportar', (req, res) => {
       'Link Marketplace': a.link_publi || '',
     }));
     const ws = XLSX.utils.json_to_sheet(datos);
+    // Anchos de columna explicitos asi los headers ('Precio de lista',
+    // 'Link Marketplace') no salen truncados visualmente en Excel/Sheets.
+    ws['!cols'] = [
+      { wch: 8 },   // ID
+      { wch: 14 },  // MARCA
+      { wch: 22 },  // MODELO
+      { wch: 12 },  // TIPO
+      { wch: 6 },   // AÑO
+      { wch: 12 },  // COLOR
+      { wch: 9 },   // KM
+      { wch: 12 },  // Caja
+      { wch: 18 },  // Precio de lista
+      { wch: 12 },  // Estado
+      { wch: 40 },  // Link Marketplace
+    ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });

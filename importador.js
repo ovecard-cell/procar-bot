@@ -13,7 +13,7 @@
 //   "Vendido"/"Cerrado" → 'vendido'. Si esta vacio, default 'disponible'.
 // ─────────────────────────────────────────────
 const XLSX = require('xlsx');
-const { obtenerAutoPorIdExterno, obtenerAutoPorMarcaModeloAnio, listarInventario } = require('./database');
+const { obtenerAutoPorIdExterno, obtenerAutoPorMarcaModeloAnio, obtenerAuto, listarInventario } = require('./database');
 
 // Normaliza el nombre de una columna: minúsculas, sin acentos, sin espacios extras.
 function normCol(s) {
@@ -161,6 +161,14 @@ function categorizar(items) {
     let existente = item.id_externo
       ? obtenerAutoPorIdExterno(item.id_externo)
       : null;
+
+    // Fallback: el export emite el DB id (autoincrement) cuando el auto no
+    // tenia id_externo. Si el lookup por id_externo no matcheo y el valor
+    // es puramente numerico, probamos como id de la tabla autos.
+    if (!existente && item.id_externo && /^\d+$/.test(String(item.id_externo).trim())) {
+      const porId = obtenerAuto(parseInt(item.id_externo, 10));
+      if (porId) existente = porId;
+    }
 
     if (!existente && !item.id_externo) {
       // Red de seguridad: buscamos un match laxo. Si lo hay, lo marcamos como
