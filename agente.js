@@ -334,10 +334,20 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
         console.error(`[Escalado] Error enviando plantilla a ${vendedor.nombre}:`, err.response?.data?.error?.message || err.message);
         // Lo dejamos sin notificar; el cron reintenta cuando esté disponible.
       }
-      return `Cliente asignado a ${vendedor.nombre}. Se le envió un WhatsApp con los datos del cliente.`;
+      return `ESCALADO OK. VENDEDOR ASIGNADO: "${vendedor.nombre}". Ya se le mandó un WhatsApp con los datos del cliente.
+
+INSTRUCCIONES OBLIGATORIAS PARA TU PRÓXIMA RESPUESTA AL CLIENTE:
+- Usá EXACTAMENTE el nombre "${vendedor.nombre}" en el mensaje. PROHIBIDO decir "el vendedor" genérico — el nombre va a la cara.
+- Mensaje corto (1-2 líneas): confirmás que lo asignaste a ${vendedor.nombre} y cuándo le escribe (en un toque / mañana a primera hora según el horario).
+- Ejemplo: "Listo, ya queda con ${vendedor.nombre} — te escribe en un toque." o "Bárbaro, lo tomó ${vendedor.nombre}, te contacta a la mañana."`;
     } else {
       console.log(`[Escalado] ${vendedor.nombre} está como "no recibir leads" — la notificación queda en cola hasta que se ponga disponible.`);
-      return `Cliente asignado a ${vendedor.nombre}, pero está fuera de turno. La notificación por WhatsApp se manda en cuanto vuelva a estar disponible.`;
+      return `ESCALADO OK. VENDEDOR ASIGNADO: "${vendedor.nombre}". Está fuera de turno — la notificación por WhatsApp se manda en cuanto vuelva.
+
+INSTRUCCIONES OBLIGATORIAS PARA TU PRÓXIMA RESPUESTA AL CLIENTE:
+- Usá EXACTAMENTE el nombre "${vendedor.nombre}" en el mensaje. PROHIBIDO decir "el vendedor" genérico.
+- Mensaje corto: confirmá que lo asignaste a ${vendedor.nombre} y que cuando vuelva al turno te escribe (no expliques "está fuera de turno" técnicamente).
+- Ejemplo: "Te queda con ${vendedor.nombre}, te escribe en cuanto pueda." o "Listo, lo tomó ${vendedor.nombre} — te llega su mensaje en un rato."`;
     }
   }
 
@@ -818,12 +828,20 @@ Vas a ver "[el cliente mandó un audio — no lo puedo escuchar]" o similar. Ped
 Nunca hagas como que escuchaste/viste algo que no.
 
 CIERRE DESPUÉS DE ESCALAR:
-Cuando ya escalaste al vendedor, el mensaje de cierre tiene que ser corto y simple — solo decile que ya le va a escribir el vendedor. NUNCA agregues el WhatsApp de la agencia.
+Cuando ya escalaste al vendedor, el mensaje de cierre tiene que ser corto y simple — solo decile al cliente quién lo va a contactar y cuándo. NUNCA agregues el WhatsApp de la agencia.
 
-✅ BIEN: "Dale, te asignamos a Antonio que ya te va a escribir con la info del Corolla."
-✅ BIEN: "Listo, ya queda con Facu — te escribe en un toque."
-✅ BIEN: "Bárbaro Facundo, lo tomó Cristhian. En un rato te llega su mensaje."
+⚠️⚠️ REGLA INNEGOCIABLE — USAR EL NOMBRE DEL VENDEDOR:
+La herramienta escalar_a_vendedor te devuelve un texto que arranca con "ESCALADO OK. VENDEDOR ASIGNADO: \"<NOMBRE>\"". Ese <NOMBRE> es el vendedor real (Antonio / Facu / Cristhian / Gustavo / etc.) que va a tomar el chat. **TENÉS QUE USAR ESE NOMBRE LITERAL EN TU RESPUESTA AL CLIENTE.**
 
+PROHIBIDO decir "el vendedor", "un vendedor", "nuestro vendedor", "el equipo" o cualquier otra forma genérica. Si la herramienta te dijo que lo tomó Facu, decí "Facu". Si dijo Cristhian, decí "Cristhian". El cliente tiene que saber con quién va a hablar — el nombre genera confianza, el "el vendedor" suena a callcenter.
+
+✅ BIEN (usa el nombre): "Dale, te asignamos a Antonio que ya te va a escribir con la info del Corolla."
+✅ BIEN (usa el nombre): "Listo, ya queda con Facu — te escribe en un toque."
+✅ BIEN (usa el nombre): "Bárbaro Facundo, lo tomó Cristhian. En un rato te llega su mensaje."
+
+❌ MAL (genérico): "Listo, te paso con el vendedor que te va a escribir." (¿qué vendedor?)
+❌ MAL (genérico): "Dale, ya queda derivado al equipo." (no tiene nombre)
+❌ MAL (genérico): "Te asignamos a un vendedor que ya te contacta." (¡decí cuál!)
 ❌ MAL: "Te asignamos a Antonio. Por las dudas el WhatsApp de la agencia es +54 9 379 487-4815." (NUNCA des ese número)
 ❌ MAL: cualquier mensaje que incluya "+54 9 379 487-4815" o "WhatsApp de la agencia"
 
