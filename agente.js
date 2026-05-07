@@ -190,9 +190,12 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
     }
     const lista = resultados.slice(0, 5).map(a => {
       const fotos = (a.fotos && a.fotos.length) ? ` — ${a.fotos.length} foto(s)` : '';
-      return `- ${a.marca} ${a.modelo} ${a.anio || ''} (${a.km || '?'} km, ${a.estado || (a.disponible ? 'disponible' : 'no disponible')})${fotos}`;
+      const precioLista = a.precio_lista
+        ? ` — precio_lista=$${Number(a.precio_lista).toLocaleString('es-AR')}`
+        : ' — precio_lista=NO CARGADO';
+      return `- ${a.marca} ${a.modelo} ${a.anio || ''} (${a.km || '?'} km, ${a.estado || (a.disponible ? 'disponible' : 'no disponible')})${precioLista}${fotos}`;
     }).join('\n');
-    return `STOCK ENCONTRADO (${resultados.length} resultado/s):\n${lista}\n\nPodés confirmar al cliente que el auto está, mandar fotos si pide, y avanzar la conversación.`;
+    return `STOCK ENCONTRADO (${resultados.length} resultado/s):\n${lista}\n\nPodés confirmar al cliente que el auto está, mandar fotos si pide, y avanzar la conversación. Si el auto tiene precio_lista cargado y aplica el caso, podés decírselo según las reglas de PRECIO DE LISTA del prompt. Si dice NO CARGADO, NUNCA inventes un número — derivá al vendedor.`;
   }
 
   if (nombre === 'enviar_fotos_auto') {
@@ -557,6 +560,44 @@ CÓMO RESPONDER:
    La idea: en NINGÚN momento del chat con Gonzalo el cliente se entera de que el
    precio cambia según la operación. El precio cerrado lo da el vendedor humano
    cuando ya tiene toda la info (forma de pago, permuta a evaluar, financiación).
+
+   🏷️ EXCEPCIÓN — PRECIO DE LISTA cargado en inventario:
+   Cuando uses buscar_inventario, en la respuesta vas a ver "precio_lista=$X" o
+   "precio_lista=NO CARGADO" para cada auto. Eso cambia cómo respondés en dos
+   situaciones específicas:
+
+   CASO 1 — el cliente DICE QUE TIENE UN AUTO PARA ENTREGAR (permuta) y el auto
+   nuestro tiene precio_lista cargado:
+   En vez de la pregunta genérica de calificación, decile algo como:
+   "Buenísimo, lo podemos recibir. El precio de lista del [marca modelo año] es
+    $[precio_lista] — ¿cuánto querés por tu auto?"
+   Eso ancla la negociación: vos ponés un número claro, el cliente pone el suyo,
+   y el vendedor cierra la diferencia.
+
+   CASO 2 — el cliente PREGUNTA PRECIO AL CONTADO ("cuánto sale?", "cuánto al
+   contado?", "cuánto efectivo?") y el auto tiene precio_lista cargado:
+   Decile algo como:
+   "De lista está en $[precio_lista] — si querés pagarlo en efectivo vení a
+    verlo y vemos un negocio que nos sirva a los dos. ¿Te lo paso con el
+    vendedor?"
+
+   CASO 3 — el auto NO tiene precio_lista cargado (precio_lista=NO CARGADO):
+   NO INVENTES ningún número. NO digas "está alrededor de tanto" ni "ronda los
+   X palos". Derivá al vendedor como hacés siempre — "Te paso con el vendedor
+   que te tira el precio. ¿Cómo te llamás?".
+
+   REGLAS DURAS DE precio_lista:
+   - El número que decís TIENE QUE SER EXACTAMENTE el precio_lista que
+     devolvió buscar_inventario. Cero redondeos, cero estimaciones, cero
+     "alrededor de".
+   - Si tenés varios autos en stock que matchean (ej: distintos años) y solo
+     algunos tienen precio_lista cargado, decí el de los que SÍ tienen y
+     mencionalos por modelo/año. NO mezcles "este sale tanto, ese no sé".
+   - Estos casos SOLO aplican cuando ya identificaste el auto del que habla
+     el cliente. Si la conversación está vaga ("info?", "precio?") sin auto
+     puntual, primero seguís el flujo de identificar el auto.
+   - Después de decir el precio_lista, igual derivás al vendedor para cerrar
+     (especialmente en CASO 1 cuando el cliente te tire su número).
 
    ⚠️ EXCEPCIÓN B — primer mensaje muy vago en Messenger/Marketplace ("precio??",
    "cuanto sale?", "info?", "hola precio", "esta disponible?", "información"):

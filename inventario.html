@@ -175,6 +175,7 @@
         <label><span class="lbl">Modelo *</span><input id="campoModelo" required placeholder="Fiesta S Plus" /></label>
         <label><span class="lbl">Año *</span><input type="number" id="campoAnio" required placeholder="2018" min="1980" max="2030" /></label>
         <label><span class="lbl">Precio (ARS) *</span><input type="number" id="campoPrecio" required placeholder="15500000" min="0" /></label>
+        <label><span class="lbl">Precio de lista (ARS)</span><input type="number" id="campoPrecioLista" placeholder="opcional" min="0" /></label>
         <label><span class="lbl">Kilómetros</span><input type="number" id="campoKm" placeholder="80000" min="0" /></label>
         <label><span class="lbl">Combustible</span>
           <select id="campoCombustible">
@@ -368,6 +369,7 @@
     document.getElementById('campoModelo').value = it.modelo || '';
     document.getElementById('campoAnio').value = it.anio || '';
     document.getElementById('campoPrecio').value = it.precio || '';
+    document.getElementById('campoPrecioLista').value = it.precio_lista || '';
     document.getElementById('campoKm').value = it.km || '';
     document.getElementById('campoCombustible').value = it.combustible || '';
     document.getElementById('campoTransmision').value = it.transmision || '';
@@ -452,6 +454,7 @@
     fd.append('modelo', document.getElementById('campoModelo').value.trim());
     fd.append('anio', document.getElementById('campoAnio').value);
     fd.append('precio', document.getElementById('campoPrecio').value);
+    fd.append('precio_lista', document.getElementById('campoPrecioLista').value || '');
     fd.append('km', document.getElementById('campoKm').value || '0');
     fd.append('combustible', document.getElementById('campoCombustible').value);
     fd.append('transmision', document.getElementById('campoTransmision').value);

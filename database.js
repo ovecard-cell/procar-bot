@@ -41,6 +41,7 @@ function inicializarDB() {
       modelo TEXT NOT NULL,
       anio INTEGER NOT NULL,
       precio INTEGER NOT NULL,
+      precio_lista INTEGER,
       km INTEGER NOT NULL,
       combustible TEXT NOT NULL,
       transmision TEXT NOT NULL,
@@ -161,6 +162,10 @@ function inicializarDB() {
   try { db.exec("ALTER TABLE autos ADD COLUMN estado TEXT DEFAULT 'disponible'"); } catch (e) { /* ya existe */ }
   // Backfill: si estado esta null, lo derivamos del booleano disponible
   try { db.exec("UPDATE autos SET estado = CASE WHEN disponible = 1 THEN 'disponible' ELSE 'vendido' END WHERE estado IS NULL OR estado = ''"); } catch (e) { /* ignore */ }
+  // Migración: precio_lista (precio publicado / de lista) — opcional. Distinto
+  // de 'precio' que es el numero base/efectivo. Lo usa Gonzalo para responder
+  // consultas de precio al contado y para anclar la negociacion de permuta.
+  try { db.exec('ALTER TABLE autos ADD COLUMN precio_lista INTEGER'); } catch (e) { /* ya existe */ }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -455,9 +460,12 @@ function estadoADisponible(estado) {
 function crearAuto(data) {
   const fotosJson = JSON.stringify(data.fotos || []);
   const estado = ESTADOS_AUTO.includes(data.estado) ? data.estado : (data.disponible === false ? 'vendido' : 'disponible');
+  const precioLista = data.precio_lista !== undefined && data.precio_lista !== null && data.precio_lista !== ''
+    ? parseInt(data.precio_lista, 10) || null
+    : null;
   const r = db.prepare(`
-    INSERT INTO autos (id_externo, tipo, carroceria, marca, modelo, anio, precio, km, combustible, transmision, color, descripcion, link_publi, fotos, estado, disponible)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO autos (id_externo, tipo, carroceria, marca, modelo, anio, precio, precio_lista, km, combustible, transmision, color, descripcion, link_publi, fotos, estado, disponible)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     data.id_externo || null,
     data.tipo || 'auto',
@@ -466,6 +474,7 @@ function crearAuto(data) {
     data.modelo,
     parseInt(data.anio, 10) || null,
     parseInt(data.precio, 10) || 0,
+    precioLista,
     parseInt(data.km, 10) || 0,
     data.combustible || '',
     data.transmision || '',
@@ -486,9 +495,19 @@ function actualizarAuto(id, data) {
   const estado = data.estado !== undefined
     ? (ESTADOS_AUTO.includes(data.estado) ? data.estado : actual.estado)
     : (data.disponible !== undefined ? (data.disponible ? 'disponible' : 'vendido') : actual.estado);
+  // precio_lista: si vino vacio explicito ('' o null), lo limpiamos a NULL.
+  // Si vino undefined (el form no lo mando), conservamos el actual.
+  let precioLista;
+  if (data.precio_lista === undefined) {
+    precioLista = actual.precio_lista;
+  } else if (data.precio_lista === '' || data.precio_lista === null) {
+    precioLista = null;
+  } else {
+    precioLista = parseInt(data.precio_lista, 10) || null;
+  }
   db.prepare(`
     UPDATE autos
-    SET id_externo = ?, tipo = ?, carroceria = ?, marca = ?, modelo = ?, anio = ?, precio = ?, km = ?,
+    SET id_externo = ?, tipo = ?, carroceria = ?, marca = ?, modelo = ?, anio = ?, precio = ?, precio_lista = ?, km = ?,
         combustible = ?, transmision = ?, color = ?, descripcion = ?,
         link_publi = ?, fotos = ?, estado = ?, disponible = ?
     WHERE id = ?
@@ -500,6 +519,7 @@ function actualizarAuto(id, data) {
     data.modelo ?? actual.modelo,
     data.anio !== undefined ? (parseInt(data.anio, 10) || null) : actual.anio,
     data.precio !== undefined ? (parseInt(data.precio, 10) || 0) : actual.precio,
+    precioLista,
     data.km !== undefined ? (parseInt(data.km, 10) || 0) : actual.km,
     data.combustible ?? actual.combustible,
     data.transmision ?? actual.transmision,
