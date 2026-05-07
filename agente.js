@@ -1078,7 +1078,7 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 1024,
     system: [
-      { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral', ttl: '1h' } },
       { type: 'text', text: contextoTemporal() + contextoConversacion(telefono) + contextoAutoDetectado(telefono) },
     ],
     tools: herramientas,
@@ -1106,7 +1106,7 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 1024,
       system: [
-        { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral', ttl: '1h' } },
         { type: 'text', text: contextoTemporal() },
       ],
       tools: herramientas,
@@ -1167,7 +1167,7 @@ Tu tarea en UNA sola respuesta corta:
         {
             type: 'text',
             text: SYSTEM_PROMPT,
-            cache_control: { type: 'ephemeral' }
+            cache_control: { type: 'ephemeral', ttl: '1h' }
         },
         {
             type: 'text',
@@ -1235,7 +1235,7 @@ Ejemplos buenos (combinaciones tipo):
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 256,
     system: [
-      { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral', ttl: '1h' } },
       { type: 'text', text: contextoTemporal() + promptRecordatorio },
     ],
     messages: mensajes.slice(-10),
