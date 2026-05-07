@@ -593,6 +593,48 @@ app.get('/api/inventario', (req, res) => {
   res.json({ items: listarInventario({ tipo, soloDisponibles }) });
 });
 
+// IMPORTANTE: este endpoint TIENE que ir antes de /api/inventario/:id sino
+// Express matchea /:id con id="exportar", parseInt da NaN y devuelve 404.
+// Exporta el inventario actual a un Excel con las MISMAS columnas que el
+// importador acepta. Así el flujo recomendado es: exportar → editar → importar,
+// y el id_externo viene siempre completo (evita duplicados).
+app.get('/api/inventario/exportar', (req, res) => {
+  try {
+    const XLSX = require('xlsx');
+    const filas = listarInventario({});
+    // Mapeamos a las columnas que parsearExcel reconoce. El alias 'tipo' en el
+    // importador apunta a 'carroceria', no a auto/moto — por eso usamos
+    // 'TIPO' para carroceria y dejamos 'auto/moto' afuera (no afecta el match).
+    const datos = filas.map(a => ({
+      ID: a.id_externo || '',
+      MARCA: a.marca || '',
+      MODELO: a.modelo || '',
+      TIPO: a.carroceria || '',
+      AÑO: a.anio || '',
+      COLOR: a.color || '',
+      KM: a.km || 0,
+      Caja: a.transmision || '',
+      'Precio de lista': a.precio || 0,
+      Estado: a.estado === 'senado' ? 'Señado'
+            : a.estado === 'vendido' ? 'Vendido'
+            : a.estado === 'pausado' ? 'Pausado'
+            : 'Disponible',
+      'Link Marketplace': a.link_publi || '',
+    }));
+    const ws = XLSX.utils.json_to_sheet(datos);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const fecha = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Disposition', `attachment; filename="inventario-procar-${fecha}.xlsx"`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) {
+    console.error('[Exportar] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/inventario/:id', (req, res) => {
   const id = parseInt(req.params.id, 10);
   const auto = obtenerAuto(id);
@@ -736,46 +778,6 @@ app.post('/api/inventario/importar/aplicar', express.json({ limit: '5mb' }), (re
   } catch (err) {
     console.error('[Importar] Error aplicando:', err.message);
     res.status(400).json({ error: err.message });
-  }
-});
-
-// Exporta el inventario actual a un Excel con las MISMAS columnas que el
-// importador acepta. Así el flujo recomendado es: exportar → editar → importar,
-// y el id_externo viene siempre completo (evita duplicados).
-app.get('/api/inventario/exportar', (req, res) => {
-  try {
-    const XLSX = require('xlsx');
-    const filas = listarInventario({});
-    // Mapeamos a las columnas que parsearExcel reconoce. El alias 'tipo' en el
-    // importador apunta a 'carroceria', no a auto/moto — por eso usamos
-    // 'TIPO' para carroceria y dejamos 'auto/moto' afuera (no afecta el match).
-    const datos = filas.map(a => ({
-      ID: a.id_externo || '',
-      MARCA: a.marca || '',
-      MODELO: a.modelo || '',
-      TIPO: a.carroceria || '',
-      AÑO: a.anio || '',
-      COLOR: a.color || '',
-      KM: a.km || 0,
-      Caja: a.transmision || '',
-      'Precio de lista': a.precio || 0,
-      Estado: a.estado === 'senado' ? 'Señado'
-            : a.estado === 'vendido' ? 'Vendido'
-            : a.estado === 'pausado' ? 'Pausado'
-            : 'Disponible',
-      'Link Marketplace': a.link_publi || '',
-    }));
-    const ws = XLSX.utils.json_to_sheet(datos);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-    const fecha = new Date().toISOString().slice(0, 10);
-    res.setHeader('Content-Disposition', `attachment; filename="inventario-procar-${fecha}.xlsx"`);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.send(buf);
-  } catch (err) {
-    console.error('[Exportar] Error:', err.message);
-    res.status(500).json({ error: err.message });
   }
 });
 
