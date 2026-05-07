@@ -223,7 +223,7 @@ function tokenizarModelo(texto) {
   return tokens.slice(0, 50);
 }
 
-function buscarAutos({ presupuesto_max, combustible, transmision, marca, modelo } = {}) {
+function buscarAutos({ presupuesto_max, combustible, transmision, marca, modelo, anio } = {}) {
   let query = 'SELECT * FROM autos WHERE disponible = 1';
   const params = [];
 
@@ -268,7 +268,18 @@ function buscarAutos({ presupuesto_max, combustible, transmision, marca, modelo 
     }
   }
 
-  query += ' ORDER BY precio ASC';
+  // Si pidieron año especifico, ordenamos por cercania al año pedido (match
+  // exacto primero, despues +/-1, +/-2, etc). Sin esto, enviar_fotos_auto
+  // tomaba resultados[0] arbitrario por precio y mandaba fotos del año
+  // equivocado (caso real: cliente pide Amarok 2017, le mandaba Amarok 2021).
+  // El ABS(anio - ?) deja primero los matches exactos (diff=0), despues los
+  // mas cercanos. El precio queda como tiebreaker.
+  if (anio) {
+    query += ' ORDER BY ABS(anio - ?) ASC, precio ASC';
+    params.push(parseInt(anio, 10));
+  } else {
+    query += ' ORDER BY precio ASC';
+  }
   // IMPORTANTE: pasamos por parsearFotos para que data.fotos sea un array real
   // (la columna en DB es JSON-string). Sin esto, enviar_fotos_auto recibe la
   // string cruda y .slice(0,4) la trata como string → "filenames" = '[','"','1','7'.

@@ -92,23 +92,25 @@ const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 const herramientas = [
   {
     name: 'buscar_inventario',
-    description: 'Busca autos en el inventario actual de Procar por marca y/o modelo. Usar SIEMPRE antes de afirmar disponibilidad o de mandar fotos. IMPORTANTE: pasá SOLO el nombre del modelo SIN año, SIN versión, SIN trim, SIN km. La búsqueda hace LIKE %modelo%, así que pasar "Amarok 2017" no matchea con "Amarok 4X2 2.0L TDI". Si el cliente quiere un año/versión específico, primero buscás por modelo solo, después VOS comparás los resultados con lo que pidió. Si encontrás autos parecidos pero no exactos lo que pidió, ofrecele lo que sí hay (no digas que no tenés nada).',
+    description: 'Busca autos en el inventario actual de Procar por marca y/o modelo, y opcionalmente año. Usar SIEMPRE antes de afirmar disponibilidad o de mandar fotos. IMPORTANTE: en el modelo pasá SOLO el nombre base SIN año, SIN versión, SIN trim, SIN km — el año va aparte en el campo "anio". La búsqueda hace LIKE %modelo%, así que pasar "Amarok 2017" no matchea con "Amarok 4X2 2.0L TDI"; pasar modelo="Amarok" + anio=2017 sí. Los resultados vienen ordenados por cercanía al año pedido. Cada resultado va con un flag "match_anio" para que sepas si es el año exacto que pidió el cliente o uno cercano.',
     input_schema: {
       type: 'object',
       properties: {
         marca: { type: 'string', description: 'Marca del auto (ej: Volkswagen, Toyota, Fiat). Opcional.' },
-        modelo: { type: 'string', description: 'SOLO el nombre base del modelo, SIN año, SIN versión, SIN km. Ej: "Amarok" (NO "Amarok 2017"), "Gol Trend" (NO "Gol Trend 2018 80mil"), "Corolla" (NO "Corolla XEI 2024"). El año/versión los chequeás vos en los resultados.' },
+        modelo: { type: 'string', description: 'SOLO el nombre base del modelo, SIN año, SIN versión, SIN km. Ej: "Amarok" (NO "Amarok 2017"), "Gol Trend" (NO "Gol Trend 2018 80mil"), "Corolla" (NO "Corolla XEI 2024").' },
+        anio: { type: 'integer', description: 'Año específico que pidió el cliente. Solo pasalo si el cliente lo nombró explícito ("Amarok 2017", "Corolla 2020"). Si no lo dijo, dejalo vacío.' },
       },
     },
   },
   {
     name: 'enviar_fotos_auto',
-    description: 'Manda al cliente las fotos de un auto del inventario por el mismo canal donde está chateando (WhatsApp/Instagram/Messenger). Usar después de buscar_inventario, cuando el cliente quiere ver el auto o vos le dijiste "te paso fotos". Manda hasta 4 fotos. Si no podés mandar fotos por el canal o no hay fotos, devuelve mensaje de error.',
+    description: 'Manda al cliente las fotos de un auto del inventario por el mismo canal donde está chateando (WhatsApp/Instagram/Messenger). Usar después de buscar_inventario, cuando el cliente quiere ver el auto o vos le dijiste "te paso fotos". Manda hasta 4 fotos. CRÍTICO: si pasás "anio" y NO existe ese año exacto en stock, la herramienta NO manda fotos — devuelve los años disponibles para que vos avises al cliente ANTES de mandar fotos de otro año. NO te saltees ese aviso.',
     input_schema: {
       type: 'object',
       properties: {
         marca: { type: 'string', description: 'Marca del auto (ej: Toyota, Volkswagen). Opcional.' },
         modelo: { type: 'string', description: 'Modelo (ej: Corolla XEI, Gol Trend). Pasá lo más específico posible. Requerido.' },
+        anio: { type: 'integer', description: 'Año específico que pidió el cliente. Si lo nombró explícito, pasalo — la herramienta NO manda fotos si ese año no existe en stock, te avisa qué años hay para que se lo digas al cliente.' },
       },
       required: ['modelo'],
     },
@@ -184,23 +186,35 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
 
   if (nombre === 'buscar_inventario') {
     const { buscarAutos } = require('./database');
-    const resultados = buscarAutos({ marca: input.marca, modelo: input.modelo });
+    const anioPedido = input.anio ? parseInt(input.anio, 10) : null;
+    const resultados = buscarAutos({ marca: input.marca, modelo: input.modelo, anio: anioPedido });
     if (!resultados.length) {
-      return `SIN STOCK: no hay autos disponibles que coincidan con marca="${input.marca || ''}" modelo="${input.modelo || ''}". DECILE AL CLIENTE QUE ESE AUTO PUNTUAL YA NO ESTÁ Y ESCALÁ AL VENDEDOR PARA QUE LE OFREZCA ALTERNATIVAS.`;
+      return `SIN STOCK: no hay autos disponibles que coincidan con marca="${input.marca || ''}" modelo="${input.modelo || ''}"${anioPedido ? ` anio=${anioPedido}` : ''}. DECILE AL CLIENTE QUE ESE AUTO PUNTUAL YA NO ESTÁ Y ESCALÁ AL VENDEDOR PARA QUE LE OFREZCA ALTERNATIVAS.`;
     }
     const lista = resultados.slice(0, 5).map(a => {
       const fotos = (a.fotos && a.fotos.length) ? ` — ${a.fotos.length} foto(s)` : '';
       const precioLista = a.precio_lista
         ? ` — precio_lista=$${Number(a.precio_lista).toLocaleString('es-AR')}`
         : ' — precio_lista=NO CARGADO';
-      return `- ${a.marca} ${a.modelo} ${a.anio || ''} (${a.km || '?'} km, ${a.estado || (a.disponible ? 'disponible' : 'no disponible')})${precioLista}${fotos}`;
+      // match_anio: si el cliente pidio año y este resultado matchea exacto, lo
+      // marcamos asi Gonzalo sabe cual es. Sin esto Haiku tomaba el primero
+      // (que con el ORDER BY ABS(anio-?) ahora es el mas cercano, pero si pidio
+      // 2017 y solo hay 2021, "el mas cercano" es 2021 — y eso no es "match").
+      const matchAnio = anioPedido
+        ? (a.anio === anioPedido ? ' [MATCH_ANIO_EXACTO]' : ' [NO_MATCH_ANIO_EXACTO]')
+        : '';
+      return `- ${a.marca} ${a.modelo} ${a.anio || ''} (${a.km || '?'} km, ${a.estado || (a.disponible ? 'disponible' : 'no disponible')})${matchAnio}${precioLista}${fotos}`;
     }).join('\n');
-    return `STOCK ENCONTRADO (${resultados.length} resultado/s):\n${lista}\n\nPodés confirmar al cliente que el auto está, mandar fotos si pide, y avanzar la conversación. Si el auto tiene precio_lista cargado y aplica el caso, podés decírselo según las reglas de PRECIO DE LISTA del prompt. Si dice NO CARGADO, NUNCA inventes un número — derivá al vendedor.`;
+    const notaAnio = anioPedido && !resultados.some(a => a.anio === anioPedido)
+      ? `\n\n⚠️ ATENCIÓN: el cliente pidió ${input.modelo} ${anioPedido} pero NO HAY MATCH EXACTO en stock. Antes de mandar fotos, AVISALE al cliente qué años SÍ tenés y preguntale cuál quiere ver.`
+      : '';
+    return `STOCK ENCONTRADO (${resultados.length} resultado/s, ordenados por cercanía al año pedido):\n${lista}${notaAnio}\n\nPodés confirmar al cliente que el auto está, mandar fotos si pide, y avanzar la conversación. Si el auto tiene precio_lista cargado y aplica el caso, podés decírselo según las reglas de PRECIO DE LISTA del prompt. Si dice NO CARGADO, NUNCA inventes un número — derivá al vendedor.`;
   }
 
   if (nombre === 'enviar_fotos_auto') {
     const { buscarAutos } = require('./database');
-    const resultados = buscarAutos({ marca: input.marca, modelo: input.modelo });
+    const anioPedido = input.anio ? parseInt(input.anio, 10) : null;
+    const resultados = buscarAutos({ marca: input.marca, modelo: input.modelo, anio: anioPedido });
 
     // Helper para devolver instrucciones SILENCIOSAS — el cliente NUNCA tiene que
     // enterarse de que hubo una limitación técnica. Gonzalo pivotea natural.
@@ -212,10 +226,37 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
     if (!resultados.length) {
       return pivotarASinFotos(`buscar_inventario sin resultados para "${input.modelo}"`);
     }
-    const auto = resultados[0];
+
+    // Si pidieron un año especifico y NO hay match exacto, NO mandamos fotos
+    // todavia. Devolvemos los años disponibles para que Gonzalo le avise al
+    // cliente ANTES de mandar fotos de otro año (caso real: pidio Amarok 2017,
+    // teniamos solo Amarok 2021, y mandabamos las del 2021 sin avisar).
+    let auto;
+    if (anioPedido) {
+      const matchExacto = resultados.find(a => a.anio === anioPedido);
+      if (!matchExacto) {
+        const anios = [...new Set(resultados.map(a => a.anio).filter(Boolean))]
+          .sort((a, b) => Math.abs(a - anioPedido) - Math.abs(b - anioPedido));
+        const lista = anios.map(a => `${input.modelo} ${a}`).join(', ');
+        console.log(`[enviar_fotos_auto] año ${anioPedido} no existe en stock, años disponibles: ${anios.join(', ')}`);
+        return `NO_MANDAR_FOTOS_TODAVIA: el cliente pidió ${input.modelo} ${anioPedido}, pero ESE AÑO NO EXISTE en stock. Años disponibles del ${input.modelo}: ${lista}.
+
+INSTRUCCIONES OBLIGATORIAS PARA TU PRÓXIMA RESPUESTA AL CLIENTE:
+- AVISALE PRIMERO que el ${anioPedido} no lo tenés.
+- Decile qué años SÍ tenés (los de la lista de arriba).
+- Preguntale si quiere ver alguno de esos.
+- PROHIBIDO mandar fotos sin que el cliente confirme primero qué año quiere ver.
+- Ejemplo: "Del ${input.modelo} ${anioPedido} no tengo, pero sí tengo ${lista}. ¿Te muestro alguno de esos?"
+- Cuando el cliente confirme un año, recién ahí volvés a llamar enviar_fotos_auto con ese año.`;
+      }
+      auto = matchExacto;
+    } else {
+      auto = resultados[0];
+    }
+
     const fotos = (auto.fotos || []).slice(0, 4);
     if (!fotos.length) {
-      return pivotarASinFotos(`auto encontrado (${auto.marca} ${auto.modelo}) pero sin fotos cargadas`);
+      return pivotarASinFotos(`auto encontrado (${auto.marca} ${auto.modelo} ${auto.anio || ''}) pero sin fotos cargadas`);
     }
 
     const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN
@@ -258,8 +299,8 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
       console.error(`[enviar_fotos_auto] FALLO TOTAL canal=${canal} auto="${auto.marca} ${auto.modelo}" baseUrl=${baseUrl} fotos=${fotos.length} errores:`, errores);
       return pivotarASinFotos(`canal=${canal}, los ${fotos.length} envíos fallaron`, errores.join(' | '));
     }
-    console.log(`[enviar_fotos_auto] EXITOSO canal=${canal} ${enviadas}/${fotos.length} fotos enviadas`);
-    return `LISTO: ${enviadas} foto(s) enviada(s) de ${auto.marca} ${auto.modelo} por ${canal}. NO repitas "te paso fotos" — ya las recibió. Continuá la conversación como si las hubieras mandado naturalmente. Si tiene sentido, pedí el nombre y derivá al vendedor para cerrar la operación.`;
+    console.log(`[enviar_fotos_auto] EXITOSO canal=${canal} ${enviadas}/${fotos.length} fotos del ${auto.marca} ${auto.modelo} ${auto.anio || ''} enviadas`);
+    return `LISTO: ${enviadas} foto(s) enviada(s) del ${auto.marca} ${auto.modelo} ${auto.anio || ''} por ${canal}. NO repitas "te paso fotos" — ya las recibió. Continuá la conversación como si las hubieras mandado naturalmente. Si tiene sentido, pedí el nombre y derivá al vendedor para cerrar la operación.`;
   }
 
   if (nombre === 'guardar_lead') {
@@ -666,21 +707,37 @@ CÓMO RESPONDER:
 
    ⚠️ EXCEPCIÓN C — cliente menciona un auto puntual ("tenés el Gol Trend?",
    "precio del Cronos", "el Onix está disponible?", "la Amarok 2017"):
-   USÁ SIEMPRE la herramienta buscar_inventario antes de responder. Pasá SOLO el
-   modelo base sin año/versión (ej: pasá "Amarok", NO "Amarok 2017").
+   USÁ SIEMPRE la herramienta buscar_inventario antes de responder. En el campo
+   "modelo" pasá SOLO el nombre base sin año/versión. Si el cliente nombró un
+   AÑO ESPECÍFICO ("Amarok 2017", "Corolla 2020"), pasalo en el campo "anio"
+   aparte. Ej: { modelo: "Amarok", anio: 2017 }, NO { modelo: "Amarok 2017" }.
+
+   Cada resultado viene con un flag MATCH_ANIO_EXACTO o NO_MATCH_ANIO_EXACTO
+   cuando pediste año. Eso te dice si el año que pidió el cliente está en stock.
 
    Después analizá los resultados:
-   - Si hay STOCK con el año/versión exacto que pidió → confirmá ese, mandá fotos.
-   - Si hay STOCK pero de OTRO año/versión (ej: pidió Amarok 2017, hay Amarok 2023)
-      → ofrecele el que SÍ tenés con tono natural, NO digas que "no hay" cuando hay
-      algo parecido. Ejemplo: "Esa puntual ya no está, pero tengo una Amarok 2023
-      Trendline impecable. Te paso fotos."
-   - Si SIN STOCK → ahí sí decile que no tenés ese modelo y escalá al vendedor para
-      alternativas. Ejemplo: "Uy, ese modelo ya no está. Te paso con el vendedor
-      para que te muestre algo parecido. ¿Cómo te llamás?"
+   - Si hay STOCK con MATCH_ANIO_EXACTO → confirmá ese, mandá fotos pasando
+     marca + modelo + anio a enviar_fotos_auto.
+   - Si pediste año pero NO hay MATCH_ANIO_EXACTO (ej: pidió Amarok 2017 y solo
+     hay Amarok 2021/2023) → ⚠️ NO MANDES FOTOS TODAVÍA. Avisale primero qué años
+     SÍ tenés y preguntale si quiere ver alguno. Ejemplo: "De Amarok 2017 no
+     tengo, pero sí tengo la 2021 y la 2023. ¿Te muestro alguna de esas?"
+     Cuando el cliente confirme un año, ahí recién llamás enviar_fotos_auto
+     con ese año.
+   - Si el cliente NO pidió año (solo "tenés Amarok?") → mandá fotos del primer
+     resultado sin más vueltas.
+   - Si SIN STOCK → ahí sí decile que no tenés ese modelo y escalá al vendedor
+     para alternativas.
 
    NUNCA confirmes disponibilidad ni mandes fotos sin haber buscado primero.
-   NUNCA digas "no tenés" si encontraste algo del mismo modelo aunque sea otro año.
+   NUNCA mandes fotos del año equivocado sin avisarle al cliente que el año
+   exacto que pidió no está.
+
+   ⚠️ enviar_fotos_auto te protege: si pasás "anio" y ese año no existe, la
+   herramienta NO manda fotos y te devuelve los años disponibles para que
+   avises al cliente. Confiá en esa señal — si te dice NO_MANDAR_FOTOS_TODAVIA,
+   seguís el flujo de avisar y NO insistas con otro modelo o año en el mismo
+   turno.
 
    ⚠️⚠️ SUPER IMPORTANTE — distinguir "PREGUNTA POR UN AUTO NUESTRO" vs
    "ME OFRECE SU AUTO EN PERMUTA":
