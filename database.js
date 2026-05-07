@@ -73,6 +73,13 @@ function inicializarDB() {
     db.exec('ALTER TABLE clientes ADD COLUMN cuil TEXT');
   } catch (e) { /* ya existe */ }
 
+  // Migración: WhatsApp del cliente — necesario cuando el canal es 'web'
+  // (ahi el "telefono" del cliente es un id anonimo tipo 'web_xxxx', no un
+  // numero real; pedimos el WA aparte para que el vendedor lo pueda contactar).
+  try {
+    db.exec('ALTER TABLE clientes ADD COLUMN whatsapp TEXT');
+  } catch (e) { /* ya existe */ }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS conversaciones (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,6 +137,9 @@ function inicializarDB() {
   try { db.exec('ALTER TABLE asignaciones ADD COLUMN cliente_nombre TEXT'); } catch (e) { /* ya existe */ }
   try { db.exec('ALTER TABLE asignaciones ADD COLUMN vehiculo_interes TEXT'); } catch (e) { /* ya existe */ }
   try { db.exec('ALTER TABLE asignaciones ADD COLUMN notificado_en DATETIME'); } catch (e) { /* ya existe */ }
+  // Migración: WhatsApp del cliente (snapshot al momento del escalado). Lo
+  // pide Gonzalo cuando el canal es 'web' antes de derivar al vendedor.
+  try { db.exec('ALTER TABLE asignaciones ADD COLUMN cliente_whatsapp TEXT'); } catch (e) { /* ya existe */ }
   // Migración: embudo de etapas. nuevo → en_conversacion → cotizado → visita_acordada → vendido | perdido
   try { db.exec("ALTER TABLE asignaciones ADD COLUMN etapa TEXT DEFAULT 'nuevo'"); } catch (e) { /* ya existe */ }
   try { db.exec('ALTER TABLE asignaciones ADD COLUMN motivo_perdido TEXT'); } catch (e) { /* ya existe */ }
@@ -335,8 +345,10 @@ function obtenerVendedores() {
 }
 
 function obtenerVendedorConMenosAsignaciones(canal) {
-  // Marketplace siempre va a Gustavo, ignorando activo/disponible/canales.
-  if (canal === 'marketplace') {
+  // Marketplace y Web siempre van a Gustavo, ignorando activo/disponible/canales.
+  // (Web son leads del widget del sitio — Gustavo los maneja todos por
+  // decisión de negocio, igual que marketplace.)
+  if (canal === 'marketplace' || canal === 'web') {
     const gustavo = db.prepare("SELECT * FROM vendedores WHERE LOWER(nombre) = 'gustavo'").get();
     if (gustavo) return gustavo;
     // Si no existe Gustavo, cae al Round-Robin normal.
@@ -346,7 +358,7 @@ function obtenerVendedorConMenosAsignaciones(canal) {
   // Preferencia: 1) activo + disponible + maneja el canal,
   //              2) activo + disponible (cualquier canal),
   //              3) activo (aunque no esté disponible — la notificación queda en cola)
-  // Gustavo queda excluido del Round-Robin: solo recibe leads de marketplace.
+  // Gustavo queda excluido del Round-Robin: solo recibe leads de marketplace y web.
   const canalNormalizado = (canal === 'messenger' || canal === 'facebook') ? 'facebook' : (canal || '');
   const filtrosCanal = [
     `canales = 'todos'`,
@@ -377,11 +389,11 @@ function obtenerVendedorConMenosAsignaciones(canal) {
 // ASIGNACIONES
 // ─────────────────────────────────────────────
 
-function crearAsignacion({ cliente_telefono, vendedor_id, motivo, cliente_nombre, vehiculo_interes }) {
+function crearAsignacion({ cliente_telefono, vendedor_id, motivo, cliente_nombre, vehiculo_interes, cliente_whatsapp }) {
   const result = db.prepare(`
-    INSERT INTO asignaciones (cliente_telefono, vendedor_id, motivo, cliente_nombre, vehiculo_interes)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(cliente_telefono, vendedor_id, motivo, cliente_nombre || null, vehiculo_interes || null);
+    INSERT INTO asignaciones (cliente_telefono, vendedor_id, motivo, cliente_nombre, vehiculo_interes, cliente_whatsapp)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(cliente_telefono, vendedor_id, motivo, cliente_nombre || null, vehiculo_interes || null, cliente_whatsapp || null);
   return result.lastInsertRowid;
 }
 

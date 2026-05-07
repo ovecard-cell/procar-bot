@@ -170,6 +170,10 @@ const herramientas = [
         vendedor_preferido: {
           type: 'string',
           description: 'Si el cliente pidió un vendedor específico por nombre (Antonio, Facu, Cristhian, Gustavo), pasalo acá. Si no, dejalo vacío y el sistema asigna automáticamente.'
+        },
+        whatsapp_cliente: {
+          type: 'string',
+          description: 'Número de WhatsApp del cliente, OBLIGATORIO cuando el canal es "web" (porque el id del cliente web es anónimo y el vendedor no tiene cómo escribirle sin esto). Para otros canales (whatsapp, messenger, instagram) dejalo vacío — el sender_id ya es el contacto real.'
         }
       },
       required: ['motivo', 'resumen_cliente', 'vehiculo_interes']
@@ -309,6 +313,20 @@ INSTRUCCIONES OBLIGATORIAS PARA TU PRÓXIMA RESPUESTA AL CLIENTE:
   }
 
   if (nombre === 'escalar_a_vendedor') {
+    // Defensa para canal web: el sender_id del widget es anonimo (web_xxxx),
+    // sin esto el vendedor no tiene como contactar al cliente. Si Gonzalo
+    // intenta escalar sin haber pedido el WhatsApp, devolvemos instruccion
+    // explicita para que lo pida ANTES.
+    if (canal === 'web' && (!input.whatsapp_cliente || !String(input.whatsapp_cliente).trim())) {
+      console.log(`[Agente] Escalado web bloqueado para ${telefono}: falta whatsapp_cliente`);
+      return `NO_ESCALAR_TODAVIA: el cliente vino por el widget de la web y NO te dio el WhatsApp. Sin ese numero el vendedor no lo puede contactar.
+
+INSTRUCCIONES OBLIGATORIAS PARA TU PROXIMA RESPUESTA AL CLIENTE:
+- Pedile el numero de WhatsApp de forma natural y amable.
+- Ejemplo: "Dale, ¿me dejas tu numero de WhatsApp asi te escribimos directamente?"
+- NO escales todavia. Cuando el cliente te pase el numero, recien ahi llamas escalar_a_vendedor de nuevo con whatsapp_cliente lleno.`;
+    }
+
     let vendedor = null;
 
     // Si el cliente pidió un vendedor específico, intentar asignarlo a ese
@@ -345,6 +363,17 @@ INSTRUCCIONES OBLIGATORIAS PARA TU PRÓXIMA RESPUESTA AL CLIENTE:
     }
     const vehiculoInteres = (input.vehiculo_interes || '').trim() || 'consulta general';
     const motivoCorto = (input.motivo || input.resumen_cliente || 'sin detalle').trim();
+    // WhatsApp del cliente: lo pasa el modelo cuando el canal es web. Limpiamos
+    // a digitos solos por las dudas (el modelo puede meter '+', espacios, etc.)
+    const waCliente = (input.whatsapp_cliente || '').replace(/\D/g, '') || null;
+    if (waCliente) {
+      try {
+        const { db } = require('./database');
+        db.prepare(`UPDATE clientes SET whatsapp = ? WHERE telefono = ?`).run(waCliente, telefono);
+      } catch (err) {
+        console.error('[Agente] No pude persistir whatsapp del cliente:', err.message);
+      }
+    }
 
     // Crear la asignación en la base de datos con todos los datos para la plantilla,
     // así el cron de notificaciones puede mandarla después si estamos fuera de horario.
@@ -354,6 +383,7 @@ INSTRUCCIONES OBLIGATORIAS PARA TU PRÓXIMA RESPUESTA AL CLIENTE:
       motivo: motivoCorto,
       cliente_nombre: nombreCliente,
       vehiculo_interes: vehiculoInteres,
+      cliente_whatsapp: waCliente,
     });
 
     // Pausar el bot para esta conversación: el vendedor toma el chat
@@ -363,12 +393,19 @@ INSTRUCCIONES OBLIGATORIAS PARA TU PRÓXIMA RESPUESTA AL CLIENTE:
 
     // ¿El vendedor asignado está disponible AHORA para recibir leads?
     // (Cada vendedor controla esto desde su dashboard con un botón.)
+    // Si tenemos WA del cliente (canal web), lo metemos en el campo 'consulta'
+    // del template — sino el vendedor no tiene como contactarlo (el sender_id
+    // web_xxxx no sirve para escribir).
+    const consultaParaVendedor = waCliente
+      ? `${motivoCorto} · WhatsApp del cliente: ${waCliente}`
+      : motivoCorto;
+
     if (vendedor.disponible) {
       try {
         await enviarLeadAsignado(vendedor.telefono, {
           cliente: nombreCliente,
           vehiculo: vehiculoInteres,
-          consulta: motivoCorto,
+          consulta: consultaParaVendedor,
         });
         marcarAsignacionNotificada(asignacionId);
       } catch (err) {
@@ -1123,6 +1160,16 @@ function contextoAutoDetectado(telefono) {
 // para que cuando el cliente sigue escribiendo fuera de horario le diga
 // algo concreto del estilo "Facu ya cerró, mañana de 9 te sigue atendiendo"
 // en vez de respuestas genéricas que dejan al cliente sin saber cuándo le contestan.
+// Renderiza una pista corta sobre el canal actual cuando hay reglas
+// especificas. Hoy solo distinguimos 'web': el sender_id es anonimo y antes
+// de derivar al vendedor hay que pedir el WhatsApp.
+function contextoCanalActual(canal) {
+  if (canal === 'web') {
+    return `\n\nCANAL ACTUAL: web (widget del sitio). El identificador del cliente es anonimo (web_xxxx), por lo que ANTES de llamar a escalar_a_vendedor TENES QUE pedirle el WhatsApp al cliente y pasarlo en el campo 'whatsapp_cliente' de la herramienta. Sin ese numero el vendedor no puede contactarlo. Pedilo natural: "Dale, ¿me dejas tu numero de WhatsApp asi te escribimos directamente?"`;
+  }
+  return '';
+}
+
 function contextoConversacion(telefono) {
   try {
     const { db } = require('./database');
@@ -1196,7 +1243,7 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
     max_tokens: 1024,
     system: [
       { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral', ttl: '1h' } },
-      { type: 'text', text: contextoTemporal() + contextoConversacion(telefono) + contextoAutoDetectado(telefono) },
+      { type: 'text', text: contextoTemporal() + contextoCanalActual(canal) + contextoConversacion(telefono) + contextoAutoDetectado(telefono) },
     ],
     tools: herramientas,
     messages: mensajes
