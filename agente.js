@@ -710,6 +710,33 @@ CÓMO RESPONDER:
    - Habla en pasado o como dueño ("mi corolla", "el que tengo").
    - Combina año, km, equipamiento como descripción.
 
+   ⚠️⚠️⚠️ MENSAJES COMPUESTOS — el cliente nombra DOS autos en una sola línea:
+   Cuando el mensaje del cliente menciona DOS autos al mismo tiempo —
+   "me interesa el X y tengo un Y para entregar" / "me gusta el X, tengo un
+   Y" / "el X, te dejo el Y como parte de pago" / "el X 2020, tengo un Y" —
+   el primer auto (X) es el que QUIERE COMPRAR, el segundo (Y) es el que
+   TIENE PARA PERMUTAR. NO te confundas.
+
+   ✅ BIEN — interpretación correcta:
+      Cliente: "Me interesa el 2020 pero la financiación. Tengo un Gol para
+              entregar y puedo pagar 1 millón por mes aprox"
+      → El auto que quiere comprar es el 2020 (Corolla 2020 que ya venía
+        del contexto). El Gol es SU usado para permuta. Quiere financiar
+        además. NO uses buscar_inventario("Gol") — eso es PERMUTA, no stock.
+      Vos: "Bárbaro, lo tomamos en parte de pago. Para la financiación
+            pasame tu CUIT así verificamos las cuotas que te aprueban. Y
+            del Gol contame año y cómo está. ¿Cómo te llamás?"
+
+   ❌ MAL — confundir el auto en permuta con un pedido de stock:
+      Cliente: "Me interesa el 2020 pero la financiación. Tengo un Gol
+              para entregar y puedo pagar 1 millón por mes aprox"
+      Bot (mal): usa buscar_inventario { modelo: 'Gol' } — interpretó "Gol"
+                 como auto a comprar. ❌ El cliente NO está pidiendo un Gol.
+
+   REGLA DURA: si la frase incluye "tengo un X", "te entrego mi X", "dejo el
+   X como parte de pago", "el X es para permutar", "X en parte de pago" —
+   ese X es PERMUTA, **NUNCA** lo busques en buscar_inventario.
+
    Cuando dudes entre las dos opciones → ASUMÍ permuta y preguntá. Si
    resulta que estaba preguntando por stock, el cliente te corrige sin drama.
    Pero si asumís stock cuando era permuta, le decís "no lo tenemos" y
@@ -1152,6 +1179,16 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
     .map(b => b.text)
     .join('');
   const textoRespuesta = sanitizarSaliente(textoCrudo);
+
+  // Defensa: si la respuesta termina vacia (modelo se quedo en tool_use loop
+  // hasta el limite, o sanitizarSaliente borro todo el texto), logueamos
+  // diagnostico para no repetir el silencio que paso con Nicolas Torres.
+  if (!textoRespuesta || !textoRespuesta.trim()) {
+    const usosHerramientas = respuesta.content
+      .filter(b => b.type === 'tool_use')
+      .map(b => `${b.name}(${JSON.stringify(b.input).slice(0, 120)})`);
+    console.error(`[Agente] respuesta vacia para tel=${telefono} canal=${canal} | iteraciones=${iteraciones} stop_reason=${respuesta.stop_reason} | textoCrudo=${JSON.stringify(textoCrudo).slice(0, 200)} | tools=[${usosHerramientas.join(', ')}]`);
+  }
 
   guardarMensaje({ telefono, rol: 'assistant', contenido: textoRespuesta, canal });
   // Registramos el timestamp para que el siguiente turno pueda detectar si un

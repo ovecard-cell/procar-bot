@@ -255,8 +255,12 @@ async function manejarMensajeMeta({ canal, senderId, message, enviar }) {
       guardarMensaje({ telefono: senderId, rol: 'user', contenido: '', canal, tipo, archivo });
     }
     const ultimo = guardados[guardados.length - 1];
-    const respuesta = await procesarMensaje(senderId, '', canal, ultimo);
-    if (respuesta) await enviar(senderId, respuesta);
+    try {
+      const respuesta = await procesarMensaje(senderId, '', canal, ultimo);
+      if (respuesta) await enviar(senderId, respuesta);
+    } catch (err) {
+      console.error(`[${canal}] CRASH procesando attachment de ${senderId} | tipo=${ultimo.tipo} archivo=${ultimo.archivo} | error: ${err.message}\n${err.stack || ''}`);
+    }
     return;
   }
 
@@ -264,8 +268,14 @@ async function manejarMensajeMeta({ canal, senderId, message, enviar }) {
   if (typeof message.text === 'string' && message.text.trim()) {
     const texto = message.text;
     console.log(`[${canal}] INBOUND sender_id="${senderId}" (type=${typeof senderId}, len=${String(senderId).length}) texto="${texto}"`);
-    const respuesta = await procesarMensaje(senderId, texto, canal);
-    if (respuesta) await enviar(senderId, respuesta);
+    try {
+      const respuesta = await procesarMensaje(senderId, texto, canal);
+      if (respuesta) await enviar(senderId, respuesta);
+    } catch (err) {
+      // Catch puntual: si procesarMensaje o enviar() crashean, queremos saberlo
+      // CON el sender_id y el texto que dispararon — sino el silencio queda mudo.
+      console.error(`[${canal}] CRASH procesando mensaje de ${senderId} | texto="${texto.slice(0, 200)}" | error: ${err.message}\n${err.stack || ''}`);
+    }
     return;
   }
 
@@ -530,7 +540,11 @@ async function recibirMensaje(req, res) {
     }
 
   } catch (err) {
-    console.error('Error procesando mensaje:', err.message);
+    // Stack completo y body resumido — sin esto los crashes async quedan
+    // mudos (caso Nicolas Torres 2026-05-07: bot procesando, sin respuesta,
+    // sin error visible).
+    const bodyResumen = JSON.stringify(req.body || {}).slice(0, 400);
+    console.error(`[Webhook] Error procesando mensaje: ${err.message}\nbody=${bodyResumen}\n${err.stack || ''}`);
   }
 }
 
