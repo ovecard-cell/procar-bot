@@ -400,6 +400,11 @@ INSTRUCCIONES OBLIGATORIAS PARA TU PROXIMA RESPUESTA AL CLIENTE:
       ? `${motivoCorto} · WhatsApp del cliente: ${waCliente}`
       : motivoCorto;
 
+    // Calcular cuando va a contactar segun la hora ARG real, asi Haiku no
+    // tiene que adivinar el horario (se equivocaba seguido). El texto vuelve
+    // listo para usar literal en el cierre.
+    const proxContacto = proximoContactoVendedor();
+
     if (vendedor.disponible) {
       try {
         await enviarLeadAsignado(vendedor.telefono, {
@@ -412,20 +417,33 @@ INSTRUCCIONES OBLIGATORIAS PARA TU PROXIMA RESPUESTA AL CLIENTE:
         console.error(`[Escalado] Error enviando plantilla a ${vendedor.nombre}:`, err.response?.data?.error?.message || err.message);
         // Lo dejamos sin notificar; el cron reintenta cuando esté disponible.
       }
-      return `ESCALADO OK. VENDEDOR ASIGNADO: "${vendedor.nombre}". Ya se le mandó un WhatsApp con los datos del cliente.
+      const ejemploDentro = `Listo, ya queda con ${vendedor.nombre} — te escribe ${proxContacto.texto}. Cualquier cosa me avisás.`;
+      const ejemploFuera = `Listo, ya queda con ${vendedor.nombre} — como ahora estamos fuera de horario, te escribe ${proxContacto.texto}. Cualquier cosa me avisás.`;
+      return `ESCALADO OK. VENDEDOR ASIGNADO: "${vendedor.nombre}". Ya se le mandó un WhatsApp con los datos del cliente. HORARIO ACTUAL: ${proxContacto.dentroHorario ? 'DENTRO de horario de atencion (9-13 / 16:30-21 lun-sab)' : 'FUERA de horario de atencion'}. PROXIMO CONTACTO DEL VENDEDOR AL CLIENTE: ${proxContacto.texto}.
 
 INSTRUCCIONES OBLIGATORIAS PARA TU PRÓXIMA RESPUESTA AL CLIENTE:
-- Usá EXACTAMENTE el nombre "${vendedor.nombre}" en el mensaje. PROHIBIDO decir "el vendedor" genérico — el nombre va a la cara.
-- Mensaje corto (1-2 líneas): confirmás que lo asignaste a ${vendedor.nombre} y cuándo le escribe (en un toque / mañana a primera hora según el horario).
-- Ejemplo: "Listo, ya queda con ${vendedor.nombre} — te escribe en un toque." o "Bárbaro, lo tomó ${vendedor.nombre}, te contacta a la mañana."`;
+- Usá EXACTAMENTE el nombre "${vendedor.nombre}" en el mensaje. PROHIBIDO decir "el vendedor" generico.
+- Incluí EXACTAMENTE el texto "${proxContacto.texto}" para que el cliente sepa cuando lo van a contactar.
+${proxContacto.dentroHorario
+  ? '- Estamos dentro de horario, mensaje normal.'
+  : '- Estamos FUERA de horario. Avisalo natural ("como estamos fuera de horario", "ya cerramos por hoy", "es domingo asi que..."), nunca dejes al cliente esperando sin saber cuando va a llegar la respuesta.'}
+- Mensaje corto (1-2 lineas).
+- Ejemplo: "${proxContacto.dentroHorario ? ejemploDentro : ejemploFuera}"`;
     } else {
       console.log(`[Escalado] ${vendedor.nombre} está como "no recibir leads" — la notificación queda en cola hasta que se ponga disponible.`);
-      return `ESCALADO OK. VENDEDOR ASIGNADO: "${vendedor.nombre}". Está fuera de turno — la notificación por WhatsApp se manda en cuanto vuelva.
+      const ejemploFueraTurno = proxContacto.dentroHorario
+        ? `Listo, lo tomó ${vendedor.nombre} — te escribe en cuanto pueda. Cualquier cosa me avisás.`
+        : `Listo, lo tomó ${vendedor.nombre} — como ahora estamos fuera de horario, te escribe ${proxContacto.texto}. Cualquier cosa me avisás.`;
+      return `ESCALADO OK. VENDEDOR ASIGNADO: "${vendedor.nombre}". Está fuera de turno — la notificación por WhatsApp se manda en cuanto vuelva. HORARIO ACTUAL: ${proxContacto.dentroHorario ? 'DENTRO' : 'FUERA'} de horario de atencion. PROXIMO CONTACTO DEL VENDEDOR AL CLIENTE: ${proxContacto.texto}.
 
 INSTRUCCIONES OBLIGATORIAS PARA TU PRÓXIMA RESPUESTA AL CLIENTE:
-- Usá EXACTAMENTE el nombre "${vendedor.nombre}" en el mensaje. PROHIBIDO decir "el vendedor" genérico.
-- Mensaje corto: confirmá que lo asignaste a ${vendedor.nombre} y que cuando vuelva al turno te escribe (no expliques "está fuera de turno" técnicamente).
-- Ejemplo: "Te queda con ${vendedor.nombre}, te escribe en cuanto pueda." o "Listo, lo tomó ${vendedor.nombre} — te llega su mensaje en un rato."`;
+- Usá EXACTAMENTE el nombre "${vendedor.nombre}" en el mensaje. PROHIBIDO decir "el vendedor" generico.
+- Incluí EXACTAMENTE el texto "${proxContacto.texto}" para que el cliente sepa cuando lo van a contactar.
+${proxContacto.dentroHorario
+  ? '- NO expliques tecnicamente que el vendedor "esta fuera de turno" — solo decile que le escribe en cuanto pueda.'
+  : '- Estamos FUERA de horario. Avisalo natural sin tecnicismos.'}
+- Mensaje corto (1-2 lineas).
+- Ejemplo: "${ejemploFueraTurno}"`;
     }
   }
 
@@ -984,18 +1002,35 @@ Nunca hagas como que escuchaste/viste algo que no.
 CIERRE DESPUÉS DE ESCALAR:
 Cuando ya escalaste al vendedor, el mensaje de cierre tiene que ser corto y simple — solo decile al cliente quién lo va a contactar y cuándo. NUNCA agregues el WhatsApp de la agencia.
 
-⚠️⚠️ REGLA INNEGOCIABLE — USAR EL NOMBRE DEL VENDEDOR:
+⚠️⚠️ REGLA INNEGOCIABLE 1 — USAR EL NOMBRE DEL VENDEDOR:
 La herramienta escalar_a_vendedor te devuelve un texto que arranca con "ESCALADO OK. VENDEDOR ASIGNADO: \"<NOMBRE>\"". Ese <NOMBRE> es el vendedor real (Antonio / Facu / Cristhian / Gustavo / etc.) que va a tomar el chat. **TENÉS QUE USAR ESE NOMBRE LITERAL EN TU RESPUESTA AL CLIENTE.**
 
 PROHIBIDO decir "el vendedor", "un vendedor", "nuestro vendedor", "el equipo" o cualquier otra forma genérica. Si la herramienta te dijo que lo tomó Facu, decí "Facu". Si dijo Cristhian, decí "Cristhian". El cliente tiene que saber con quién va a hablar — el nombre genera confianza, el "el vendedor" suena a callcenter.
 
-✅ BIEN (usa el nombre): "Dale, te asignamos a Antonio que ya te va a escribir con la info del Corolla."
-✅ BIEN (usa el nombre): "Listo, ya queda con Facu — te escribe en un toque."
-✅ BIEN (usa el nombre): "Bárbaro Facundo, lo tomó Cristhian. En un rato te llega su mensaje."
+⚠️⚠️ REGLA INNEGOCIABLE 2 — DECIR CUÁNDO VA A LLEGAR LA RESPUESTA:
+El tool result también incluye un campo "PROXIMO CONTACTO DEL VENDEDOR AL CLIENTE: <texto>" — por ejemplo "en un toque", "a partir de las 16:30", "manana a partir de las 9", "el lunes a partir de las 9". **TENÉS QUE COPIAR ESE TEXTO LITERAL EN TU RESPUESTA**, así el cliente sabe cuándo recibir el mensaje del vendedor. Sin esto el cliente queda esperando sin saber nada.
 
-❌ MAL (genérico): "Listo, te paso con el vendedor que te va a escribir." (¿qué vendedor?)
+Si el tool result dice "HORARIO ACTUAL: FUERA de horario de atencion", aclaralo natural en el mensaje al cliente — "como ahora estamos fuera de horario", "ya cerramos por hoy", "es domingo así que…". NO uses tecnicismos como "fuera de turno" o "fuera del schedule" — el cliente no tiene por qué saber esos términos.
+
+Horario de atención (lo computa el sistema, no tenés que adivinar):
+- Lunes a sábado: 9:00 a 13:00 y 16:30 a 21:00
+- Domingo cerrado
+
+✅ BIEN (dentro de horario, usa nombre + tiempo):
+   "Dale, te asignamos a Antonio que ya te escribe en un toque con la info del Corolla."
+   "Listo, ya queda con Facu — te escribe en un toque. Cualquier cosa me avisás."
+
+✅ BIEN (FUERA de horario, usa nombre + aviso del horario + tiempo):
+   "Listo, ya queda con Cristhian — como ahora estamos fuera de horario, te escribe mañana a partir de las 9. Cualquier cosa me avisás."
+   "Bárbaro, lo tomó Facu. Hoy ya cerramos, te contacta mañana a partir de las 9."
+   "Listo, ya queda con Antonio. Es domingo así que te escribe mañana a partir de las 9 — cualquier cosa estamos por acá."
+   "Te queda con Cristhian — estamos en la pausa del mediodía, te escribe a partir de las 16:30."
+
+❌ MAL (genérico, sin nombre): "Listo, te paso con el vendedor que te va a escribir." (¿qué vendedor?)
 ❌ MAL (genérico): "Dale, ya queda derivado al equipo." (no tiene nombre)
 ❌ MAL (genérico): "Te asignamos a un vendedor que ya te contacta." (¡decí cuál!)
+❌ MAL (sin tiempo, fuera de horario): "Listo, queda con Cristhian — te escribe en un toque." (mentís: son las 23 hs, no le va a escribir hoy)
+❌ MAL (sin tiempo, fuera de horario): "Te queda con Facu, ya te contacta." (¿cuándo? a las 4am?)
 ❌ MAL: "Te asignamos a Antonio. Por las dudas el WhatsApp de la agencia es +54 9 379 487-4815." (NUNCA des ese número)
 ❌ MAL: cualquier mensaje que incluya "+54 9 379 487-4815" o "WhatsApp de la agencia"
 
@@ -1072,6 +1107,50 @@ function enHorarioVendedores(fecha = new Date()) {
   if (minutos >= 540 && minutos < 780) return true;
   if (minutos >= 990 && minutos < 1260) return true;
   return false;
+}
+
+// Calcula cuando va a contactar el vendedor segun la hora actual ARG y el
+// horario de atencion (9-13 y 16:30-21 lun-sab). Devuelve un texto humano
+// listo para que Gonzalo lo use en el cierre. Ejemplos:
+//   - dentro de horario  -> "en un toque"
+//   - pausa de mediodia  -> "a partir de las 16:30"
+//   - despues de las 21  -> "manana a partir de las 9"
+//   - sabado tarde       -> "el lunes a partir de las 9"
+//   - domingo            -> "manana (lunes) a partir de las 9"
+//   - madrugada lun-sab  -> "hoy a partir de las 9"
+function proximoContactoVendedor(fecha = new Date()) {
+  if (enHorarioVendedores(fecha)) {
+    return { dentroHorario: true, texto: 'en un toque' };
+  }
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const partes = Object.fromEntries(fmt.formatToParts(fecha).map(p => [p.type, p.value]));
+  const dia = partes.weekday;
+  const minutos = parseInt(partes.hour, 10) * 60 + parseInt(partes.minute, 10);
+
+  if (dia === 'Sun') {
+    return { dentroHorario: false, texto: 'manana (lunes) a partir de las 9' };
+  }
+  // Sabado y ya cerro (>=13:00) -> espera al lunes
+  if (dia === 'Sat' && minutos >= 780) {
+    return { dentroHorario: false, texto: 'el lunes a partir de las 9' };
+  }
+  // Pausa de mediodia (13:00-16:30) lun-sab
+  if (minutos >= 780 && minutos < 990) {
+    return { dentroHorario: false, texto: 'a partir de las 16:30' };
+  }
+  // Despues de las 21 lun-vie -> manana
+  if (minutos >= 1260) {
+    return { dentroHorario: false, texto: 'manana a partir de las 9' };
+  }
+  // Madrugada lun-sab (00:00-09:00) -> hoy a las 9
+  if (minutos < 540) {
+    return { dentroHorario: false, texto: 'hoy a partir de las 9' };
+  }
+  // Caso fallback (no deberia caer aca con la logica de enHorarioVendedores)
+  return { dentroHorario: false, texto: 'apenas vuelva al turno' };
 }
 
 // Devuelve la fecha/hora actual en Argentina (UTC-3) en un texto que Claude pueda leer
