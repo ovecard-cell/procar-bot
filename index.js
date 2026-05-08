@@ -1017,6 +1017,118 @@ app.get('/api/admin/analisis-conversaciones', (req, res) => {
   }
 });
 
+// Lista de leads calientes de las ultimas 48hs para arrancar la jornada.
+// "Caliente" = tiene nombre o numero de contacto Y no cerro (etapa != vendido/
+// perdido). Ordenado por antiguedad: los que mas esperan primero.
+app.get('/api/admin/leads-calientes', (req, res) => {
+  try {
+    const { db } = require('./database');
+    const ahora = Date.now();
+    const desdeISO = new Date(ahora - 48 * 3600 * 1000).toISOString();
+
+    // Conversaciones con actividad en 48hs.
+    const filas = db.prepare(`
+      SELECT c.telefono, c.canal,
+             cl.nombre as nombre_clientes,
+             cl.whatsapp as wa_clientes,
+             ec.nombre_cliente as nombre_estado,
+             ec.etapa as etapa_estado,
+             ec.auto_interes as auto_interes_json,
+             (SELECT MAX(creado_en) FROM conversaciones WHERE telefono = c.telefono) as ultimo_msg,
+             (SELECT MAX(creado_en) FROM conversaciones WHERE telefono = c.telefono AND rol = 'user') as ultimo_msg_user,
+             (SELECT contenido FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as preview_raw,
+             (SELECT tipo FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as preview_tipo,
+             (SELECT rol FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as preview_rol,
+             a.id as asig_id, a.cliente_nombre as asig_nombre, a.etapa as asig_etapa,
+             a.cliente_whatsapp as asig_wa,
+             v.nombre as vendedor_nombre
+      FROM (SELECT DISTINCT telefono, canal FROM conversaciones WHERE creado_en >= ?) c
+      LEFT JOIN clientes cl ON cl.telefono = c.telefono
+      LEFT JOIN estado_conversacion ec ON ec.telefono = c.telefono
+      LEFT JOIN (
+        SELECT cliente_telefono, MAX(id) as max_id FROM asignaciones GROUP BY cliente_telefono
+      ) am ON am.cliente_telefono = c.telefono
+      LEFT JOIN asignaciones a ON a.id = am.max_id
+      LEFT JOIN vendedores v ON v.id = a.vendedor_id
+    `).all(desdeISO);
+
+    const ETAPAS_CERRADAS = new Set(['vendido', 'perdido']);
+
+    const leads = [];
+    for (const f of filas) {
+      // Etapa final: la de la asignacion (si existe) gana sobre la del estado.
+      const etapaFinal = (f.asig_etapa || f.etapa_estado || 'prospecto').toLowerCase();
+      // Filtrar: descartar cerradas (vendido/perdido).
+      if (ETAPAS_CERRADAS.has(etapaFinal)) continue;
+
+      // Nombre: priorizar el de asignacion (snapshot al escalar) > clientes > estado.
+      const nombre = f.asig_nombre || f.nombre_clientes || f.nombre_estado || null;
+      // Contacto: WA del estado/clientes/asignacion, o el sender si canal=whatsapp.
+      let contacto = f.asig_wa || f.wa_clientes || null;
+      if (!contacto && f.canal === 'whatsapp') contacto = f.telefono;
+
+      // CALIFICA si tiene nombre O numero de contacto real.
+      if (!nombre && !contacto) continue;
+
+      // Tiempo de espera: desde el ultimo mensaje del cliente. Si no hay user
+      // recent, fallback a ultimo_msg cualquiera.
+      const tsBase = f.ultimo_msg_user || f.ultimo_msg;
+      const horasEspera = tsBase ? (ahora - new Date(tsBase).getTime()) / 3600000 : 0;
+
+      // Preview legible
+      const tipo = f.preview_tipo;
+      let preview;
+      if (tipo === 'imagen') preview = '[IMAGEN]';
+      else if (tipo === 'audio') preview = '[AUDIO]';
+      else if (tipo === 'video') preview = '[VIDEO]';
+      else preview = (f.preview_raw || '').slice(0, 160);
+
+      // Auto interes legible (si esta en estado_conversacion)
+      let autoInteres = null;
+      try {
+        if (f.auto_interes_json) {
+          const ai = JSON.parse(f.auto_interes_json);
+          autoInteres = [ai.marca, ai.modelo, ai.anio].filter(Boolean).join(' ').trim() || null;
+        }
+      } catch { /* ignore */ }
+
+      const horas = Math.floor(horasEspera);
+      const dias = Math.floor(horas / 24);
+      const espera = dias >= 1
+        ? `${dias}d ${horas % 24}h`
+        : horas >= 1 ? `${horas}h ${Math.floor((horasEspera - horas) * 60)}min` : `${Math.floor(horasEspera * 60)}min`;
+
+      leads.push({
+        telefono: f.telefono,
+        canal: f.canal,
+        nombre: nombre || '(sin nombre)',
+        contacto: contacto || null,
+        auto_interes: autoInteres,
+        ultimo_mensaje: preview,
+        ultimo_mensaje_de: f.preview_rol === 'user' ? 'cliente' : 'bot',
+        ultimo_mensaje_ts: f.ultimo_msg,
+        vendedor_asignado: f.vendedor_nombre || null,
+        etapa: etapaFinal,
+        horas_espera: Math.round(horasEspera * 10) / 10,
+        espera_legible: espera,
+      });
+    }
+
+    // Ordenar por antiguedad: los que mas esperan primero.
+    leads.sort((a, b) => b.horas_espera - a.horas_espera);
+
+    res.json({
+      generado: new Date().toISOString(),
+      ventana: { desde: desdeISO, hasta: new Date(ahora).toISOString(), horas: 48 },
+      total: leads.length,
+      leads,
+    });
+  } catch (err) {
+    console.error('[Leads-calientes] Error:', err.message, err.stack);
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
+
 // Vendedor escribe al cliente desde el dashboard
 app.post('/api/conversacion/:telefono/enviar', async (req, res) => {
   try {
