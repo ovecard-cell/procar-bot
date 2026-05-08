@@ -859,6 +859,164 @@ app.get('/api/conversaciones', (req, res) => {
   res.json(normalizarTimestamps(filas, ['ultimo']));
 });
 
+// Endpoint de auditoria: analiza todas las conversaciones desde el ultimo
+// 14:00 ARG (= 17:00 UTC) que paso, detecta problemas heuristicamente y
+// devuelve JSON con detalle por conversacion + resumen agrupado.
+//
+// Detecta:
+//  - respuesta_vacia: filas con rol='assistant' y contenido vacio (el log
+//    defensivo de procesarMensaje se gatilla en este caso).
+//  - fotos_no_enviadas: el bot dijo "te paso fotos / ahi van" pero no hay
+//    una imagen guardada en conversaciones inmediatamente despues. OJO:
+//    enviar_fotos_auto NO persiste imagenes en conversaciones, asi que
+//    este check va a marcar TODOS los casos donde el bot prometio fotos.
+//    Es mas un proxy "el bot dijo fotos" que un fallo confirmado.
+//  - auto_confundido: el cliente dijo "tengo un X" y un mensaje del bot
+//    posterior trata X como stock disponible (tenemos X / disponible / fotos
+//    del X / esta en stock). Es heuristica, puede tener falsos positivos.
+//  - derivacion_sin_nombre: hay asignacion creada en este rango pero los
+//    mensajes del bot DESPUES de la asignacion no mencionan ningun nombre
+//    de vendedor real (Antonio/Facu/Cristhian/Gustavo).
+//
+// Notas:
+//  - "errores en logs" requiere acceso a Railway logs y no esta disponible
+//    desde el container; lo dejamos fuera. respuesta_vacia cubre el error
+//    mas comun que igual queda registrado en DB.
+app.get('/api/admin/analisis-conversaciones', (req, res) => {
+  try {
+    const { db } = require('./database');
+
+    // Most recent 14:00 ARG (= 17:00 UTC) que ya paso.
+    const desde = new Date();
+    desde.setUTCHours(17, 0, 0, 0);
+    if (desde > new Date()) desde.setUTCDate(desde.getUTCDate() - 1);
+    const desdeISO = desde.toISOString();
+    const hastaISO = new Date().toISOString();
+
+    const VENDEDORES = ['antonio', 'facu', 'facundo', 'cristhian', 'gustavo'];
+    const PROM_FOTOS = /\b(te paso fotos|ah[ií] van|ac[aá] van|ac[aá] te (?:mando|paso)|te mando fotos|paso fotos|mando fotos|las fotos|te muestro)\b/i;
+    const STOCK_TERMS = /(tenemos|disponible|en stock|te paso fotos del|te muestro|impecable|en venta|hay un)/i;
+
+    const telefonos = db.prepare(`
+      SELECT DISTINCT telefono FROM conversaciones WHERE creado_en >= ?
+    `).all(desdeISO).map(r => r.telefono);
+
+    const totales = {
+      respuesta_vacia: 0,
+      fotos_no_enviadas: 0,
+      auto_confundido: 0,
+      derivacion_sin_nombre: 0,
+    };
+    const conversaciones = [];
+
+    for (const tel of telefonos) {
+      const cliente = db.prepare('SELECT nombre, canal FROM clientes WHERE telefono = ?').get(tel);
+      const mensajes = db.prepare(`
+        SELECT rol, contenido, tipo, archivo, creado_en
+        FROM conversaciones
+        WHERE telefono = ? AND creado_en >= ?
+        ORDER BY creado_en ASC
+      `).all(tel, desdeISO);
+      if (!mensajes.length) continue;
+
+      const asig = db.prepare(`
+        SELECT a.creado_en, v.nombre as vendedor_nombre
+        FROM asignaciones a
+        JOIN vendedores v ON v.id = a.vendedor_id
+        WHERE a.cliente_telefono = ? AND a.creado_en >= ?
+        ORDER BY a.creado_en DESC LIMIT 1
+      `).get(tel, desdeISO);
+
+      const problemas = [];
+
+      // 1. respuesta_vacia
+      const vacios = mensajes.filter(m => m.rol === 'assistant' && (!m.contenido || !m.contenido.trim()) && m.tipo !== 'imagen' && m.tipo !== 'audio' && m.tipo !== 'video');
+      if (vacios.length) {
+        problemas.push({ tipo: 'respuesta_vacia', detalle: `${vacios.length} mensaje(s) sin texto` });
+        totales.respuesta_vacia += vacios.length;
+      }
+
+      // 2. fotos_no_enviadas — bot promete fotos y no hay imagen siguiente
+      let fotosSinSeguir = 0;
+      for (let i = 0; i < mensajes.length; i++) {
+        const m = mensajes[i];
+        if (m.rol !== 'assistant' || !m.contenido) continue;
+        if (!PROM_FOTOS.test(m.contenido)) continue;
+        const ventana = mensajes.slice(Math.max(0, i - 2), i + 3);
+        const hayImagen = ventana.some(x => x.rol === 'assistant' && x.tipo === 'imagen');
+        if (!hayImagen) fotosSinSeguir++;
+      }
+      if (fotosSinSeguir) {
+        problemas.push({ tipo: 'fotos_no_enviadas', detalle: `${fotosSinSeguir} promesa(s) sin imagen registrada` });
+        totales.fotos_no_enviadas += fotosSinSeguir;
+      }
+
+      // 3. auto_confundido
+      let autoConfundido = null;
+      for (let i = 0; i < mensajes.length - 1 && !autoConfundido; i++) {
+        const m = mensajes[i];
+        if (m.rol !== 'user' || !m.contenido) continue;
+        const tieneM = m.contenido.match(/\btengo (?:un|una|el|la|mi|el|los)\s+([A-Za-zÁÉÍÓÚáéíóúñÑ]+)/i);
+        if (!tieneM) continue;
+        const autoPermuta = tieneM[1].toLowerCase();
+        // Fallback heuristica: ignorar "tengo un auto" / "tengo una moto" genericos
+        if (['auto', 'auto.', 'moto', 'vehiculo', 'vehículo'].includes(autoPermuta)) continue;
+
+        for (let j = i + 1; j < Math.min(i + 4, mensajes.length); j++) {
+          if (mensajes[j].rol !== 'assistant' || !mensajes[j].contenido) continue;
+          const cont = mensajes[j].contenido.toLowerCase();
+          if (cont.includes(autoPermuta) && STOCK_TERMS.test(cont)) {
+            autoConfundido = { permuta_modelo: autoPermuta, mensaje_bot: mensajes[j].contenido.slice(0, 160) };
+            break;
+          }
+        }
+      }
+      if (autoConfundido) {
+        problemas.push({ tipo: 'auto_confundido', detalle: autoConfundido });
+        totales.auto_confundido += 1;
+      }
+
+      // 4. derivacion_sin_nombre
+      if (asig) {
+        const asigTime = new Date(asig.creado_en).getTime();
+        const msjsDespues = mensajes.filter(m => m.rol === 'assistant' && new Date(m.creado_en).getTime() >= asigTime - 2000);
+        if (msjsDespues.length) {
+          const algunoMencionaVendedor = msjsDespues.some(m => {
+            const c = (m.contenido || '').toLowerCase();
+            return VENDEDORES.some(n => c.includes(n));
+          });
+          if (!algunoMencionaVendedor) {
+            problemas.push({ tipo: 'derivacion_sin_nombre', detalle: `asignado a ${asig.vendedor_nombre} pero el bot no lo nombro` });
+            totales.derivacion_sin_nombre += 1;
+          }
+        }
+      }
+
+      conversaciones.push({
+        telefono: tel,
+        canal: cliente?.canal || mensajes[0]?.canal || mensajes[mensajes.length - 1]?.canal || '?',
+        nombre: cliente?.nombre || `Cliente ${String(tel).slice(-4)}`,
+        vendedor_asignado: asig?.vendedor_nombre || null,
+        mensajes_total: mensajes.length,
+        problemas,
+      });
+    }
+
+    // Ordenar: primero las que tienen mas problemas
+    conversaciones.sort((a, b) => b.problemas.length - a.problemas.length);
+
+    res.json({
+      rango: { desde_utc: desdeISO, hasta_utc: hastaISO, nota: 'desde = ultimo 14:00 ARG = 17:00 UTC que ya paso' },
+      total_conversaciones: conversaciones.length,
+      resumen_problemas: totales,
+      conversaciones,
+    });
+  } catch (err) {
+    console.error('[Analisis] Error:', err.message);
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
+
 // Vendedor escribe al cliente desde el dashboard
 app.post('/api/conversacion/:telefono/enviar', async (req, res) => {
   try {
