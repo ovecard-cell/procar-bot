@@ -189,6 +189,24 @@ function inicializarDB() {
     )
   `);
 
+  // Estado estructurado de cada conversacion. Lo actualiza Haiku via la
+  // herramienta actualizar_estado_conversacion cuando aprende algo nuevo.
+  // Distincion clave entre auto_interes (lo que QUIERE COMPRAR) y
+  // auto_permuta (lo que TIENE para entregar) — ambos como JSON-string.
+  // etapa: prospecto -> calificando -> calificado -> derivado.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS estado_conversacion (
+      telefono TEXT PRIMARY KEY,
+      canal TEXT,
+      auto_interes TEXT,
+      auto_permuta TEXT,
+      forma_pago TEXT,
+      nombre_cliente TEXT,
+      etapa TEXT DEFAULT 'prospecto',
+      actualizado_en DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   console.log('Tablas verificadas correctamente.');
 }
 
@@ -294,6 +312,73 @@ function buscarAutos({ presupuesto_max, combustible, transmision, marca, modelo,
   // (la columna en DB es JSON-string). Sin esto, enviar_fotos_auto recibe la
   // string cruda y .slice(0,4) la trata como string → "filenames" = '[','"','1','7'.
   return db.prepare(query).all(...params).map(parsearFotos);
+}
+
+// ─────────────────────────────────────────────
+// ESTADO ESTRUCTURADO DE CONVERSACION
+// Lo actualiza Haiku via la herramienta actualizar_estado_conversacion.
+// auto_interes y auto_permuta se guardan como JSON-string para flexibilidad.
+// ─────────────────────────────────────────────
+
+function obtenerEstadoConversacion(telefono) {
+  const row = db.prepare('SELECT * FROM estado_conversacion WHERE telefono = ?').get(telefono);
+  if (!row) {
+    return {
+      telefono,
+      canal: null,
+      auto_interes: null,
+      auto_permuta: null,
+      forma_pago: null,
+      nombre_cliente: null,
+      etapa: 'prospecto',
+      actualizado_en: null,
+    };
+  }
+  return {
+    ...row,
+    auto_interes: row.auto_interes ? safeJSON(row.auto_interes) : null,
+    auto_permuta: row.auto_permuta ? safeJSON(row.auto_permuta) : null,
+  };
+}
+
+function safeJSON(s) {
+  try { return JSON.parse(s); } catch { return null; }
+}
+
+// Merge parcial: el parcial pisa lo actual SOLO en los campos que vinieron
+// con valor (no null/undefined). Para auto_interes y auto_permuta, mergeamos
+// campo-a-campo asi un update con solo {modelo: 'X'} no borra el año previo.
+function actualizarEstadoConversacion(telefono, parcial = {}) {
+  if (!telefono) throw new Error('telefono requerido');
+  const actual = obtenerEstadoConversacion(telefono);
+
+  const mergeAuto = (oldA, newA) => {
+    if (!newA || typeof newA !== 'object') return oldA;
+    if (!oldA) return newA;
+    return { ...oldA, ...newA };
+  };
+
+  const ai = parcial.auto_interes !== undefined ? mergeAuto(actual.auto_interes, parcial.auto_interes) : actual.auto_interes;
+  const ap = parcial.auto_permuta !== undefined ? mergeAuto(actual.auto_permuta, parcial.auto_permuta) : actual.auto_permuta;
+  const formaPago = parcial.forma_pago !== undefined ? parcial.forma_pago : actual.forma_pago;
+  const nombre = parcial.nombre_cliente !== undefined ? parcial.nombre_cliente : actual.nombre_cliente;
+  const etapa = parcial.etapa !== undefined ? parcial.etapa : actual.etapa;
+  const canal = parcial.canal !== undefined ? parcial.canal : actual.canal;
+
+  const aiStr = ai ? JSON.stringify(ai) : null;
+  const apStr = ap ? JSON.stringify(ap) : null;
+
+  db.prepare(`
+    INSERT INTO estado_conversacion (telefono, canal, auto_interes, auto_permuta, forma_pago, nombre_cliente, etapa, actualizado_en)
+    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(telefono) DO UPDATE SET
+      canal = ?, auto_interes = ?, auto_permuta = ?, forma_pago = ?, nombre_cliente = ?, etapa = ?, actualizado_en = CURRENT_TIMESTAMP
+  `).run(
+    telefono, canal, aiStr, apStr, formaPago, nombre, etapa,
+    canal, aiStr, apStr, formaPago, nombre, etapa,
+  );
+
+  return obtenerEstadoConversacion(telefono);
 }
 
 // ─────────────────────────────────────────────
@@ -846,6 +931,8 @@ module.exports = {
   obtenerAuto,
   obtenerAutoPorIdExterno,
   obtenerAutoPorMarcaModeloAnio,
+  obtenerEstadoConversacion,
+  actualizarEstadoConversacion,
   crearAuto,
   actualizarAuto,
   cambiarEstadoAuto,

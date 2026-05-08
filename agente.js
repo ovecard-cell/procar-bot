@@ -8,6 +8,8 @@ const {
   obtenerHistorial,
   obtenerVendedorConMenosAsignaciones,
   crearAsignacion,
+  obtenerEstadoConversacion,
+  actualizarEstadoConversacion,
   getSetting,
   MEDIA_DIR,
 } = require('./database');
@@ -178,6 +180,57 @@ const herramientas = [
       },
       required: ['motivo', 'resumen_cliente', 'vehiculo_interes']
     }
+  },
+  {
+    name: 'actualizar_estado_conversacion',
+    description: `Actualiza el estado estructurado de la conversación. Llamala SIEMPRE que aprendas algo nuevo del cliente: qué auto QUIERE COMPRAR, qué auto TIENE para entregar en permuta, cómo va a pagar, su nombre. El estado se persiste en la DB y vos lo ves en cada turno bajo "ESTADO DE LA CONVERSACIÓN" del system message.
+
+CRÍTICO — distinguir auto_interes vs auto_permuta:
+- auto_interes = lo que el cliente QUIERE COMPRAR. Pistas: viene del anuncio que respondió, dice "me interesa el X", "tenés Y?", "quiero el Z", "estoy buscando un W", "por la publicación del N".
+- auto_permuta = lo que el cliente TIENE y quiere entregar. Pistas: "tengo un X", "mi X", "el X que tengo", "te entrego mi X", "X en parte de pago", "dejo mi Y".
+
+REGLA DURA: si el cliente dice "tengo un Corolla", Corolla va a auto_permuta. NUNCA a auto_interes. Aunque suene parecido al auto del anuncio, "tengo" siempre marca permuta.
+
+Podés llamarla varias veces a lo largo de la charla — cada llamada actualiza solo los campos que pasás (los demás se mantienen).`,
+    input_schema: {
+      type: 'object',
+      properties: {
+        auto_interes: {
+          type: 'object',
+          description: 'El auto que el cliente quiere COMPRAR. Solo poblar si el texto del cliente lo identifica claramente como auto que pide o de un anuncio. NUNCA usar para autos que el cliente "tiene".',
+          properties: {
+            marca: { type: 'string', description: 'ej: Toyota, Volkswagen, Fiat' },
+            modelo: { type: 'string', description: 'ej: Corolla, Gol Trend, Cronos' },
+            anio: { type: 'integer', description: 'año si lo dijo el cliente, ej: 2020' },
+          },
+        },
+        auto_permuta: {
+          type: 'object',
+          description: 'El auto que el cliente TIENE y quiere entregar como parte de pago. Solo poblar si el texto incluye "tengo", "mi auto", "te dejo el", "te entrego", "permuto", "X en parte de pago".',
+          properties: {
+            marca: { type: 'string' },
+            modelo: { type: 'string' },
+            anio: { type: 'integer' },
+            km: { type: 'integer', description: 'kilómetros si los dijo' },
+            estado: { type: 'string', description: 'estado general que mencionó: "impecable", "andando", "le anda bien", etc.' },
+          },
+        },
+        forma_pago: {
+          type: 'string',
+          enum: ['contado', 'financiado', 'permuta', 'mixto'],
+          description: 'contado=todo en efectivo. financiado=quiere cuotas. permuta=solo entrega usado. mixto=combina (típico permuta+financiado).',
+        },
+        nombre_cliente: {
+          type: 'string',
+          description: 'Nombre del cliente cuando te lo dijo. Solo el primer nombre o nombre completo, sin saludos ni adornos.',
+        },
+        etapa: {
+          type: 'string',
+          enum: ['prospecto', 'calificando', 'calificado', 'derivado'],
+          description: 'prospecto=recién llegó, sin info. calificando=estás haciendo preguntas para escalar. calificado=ya tenés todo lo que necesita el flujo. derivado=ya escalaste (esto lo setea escalar_a_vendedor automáticamente, NO lo cambies vos).',
+        },
+      },
+    },
   }
 ];
 
@@ -185,11 +238,42 @@ const herramientas = [
 // EJECUTAR HERRAMIENTAS
 // ─────────────────────────────────────────────
 
+// Defensa de raiz: si la marca/modelo que pasa el LLM coincide con el auto
+// que el cliente tiene en permuta (auto_permuta del estado), BLOQUEAMOS la
+// busqueda. Buscar el auto del cliente como si fuera nuestro stock fue la
+// causa principal de los bugs cascada (Nicolas/Gol, Cliente 6158/Corolla).
+function bloqueaSiEsAutoPermuta(input, estado) {
+  if (!estado || !estado.auto_permuta) return null;
+  const ap = estado.auto_permuta;
+  const inMod = String(input.modelo || '').toLowerCase().trim();
+  const inMar = String(input.marca || '').toLowerCase().trim();
+  const apMod = String(ap.modelo || '').toLowerCase().trim();
+  const apMar = String(ap.marca || '').toLowerCase().trim();
+  if (!inMod && !inMar) return null;
+  // Match si modelo coincide. Si tambien hay marca, ambos.
+  const modeloMatch = apMod && inMod && (apMod.includes(inMod) || inMod.includes(apMod));
+  const marcaMatch = apMar && inMar && (apMar.includes(inMar) || inMar.includes(apMar));
+  if (modeloMatch || (marcaMatch && !inMod)) {
+    const apTxt = [ap.marca, ap.modelo, ap.anio].filter(Boolean).join(' ');
+    const aiTxt = estado.auto_interes
+      ? [estado.auto_interes.marca, estado.auto_interes.modelo, estado.auto_interes.anio].filter(Boolean).join(' ')
+      : null;
+    return `BLOQUEADO_AUTO_PERMUTA: estás buscando "${input.marca || ''} ${input.modelo || ''}" pero ese coincide con auto_permuta="${apTxt}" — el auto que el cliente TIENE para entregar, NO el que quiere comprar.${aiTxt ? ` El auto de interés del cliente es "${aiTxt}" — buscá ese si necesitás.` : ' Todavía no sabemos qué auto quiere comprar — preguntale (sin mezclarlo con el que tiene en permuta).'}
+
+INSTRUCCIONES: NO repitas la búsqueda con auto_permuta. Si tenés que avanzar el flujo de permuta, derivá al vendedor con escalar_a_vendedor (el vendedor cotiza el usado del cliente, vos no). Si necesitás info de stock, buscá auto_interes.`;
+  }
+  return null;
+}
+
 async function ejecutarHerramienta(nombre, input, telefono, canal) {
   console.log(`[Agente] Usando herramienta: ${nombre}`, input);
 
   if (nombre === 'buscar_inventario') {
     const { buscarAutos } = require('./database');
+    // Defensa: NO buscar el auto que el cliente tiene en permuta.
+    const estado = obtenerEstadoConversacion(telefono);
+    const bloqueo = bloqueaSiEsAutoPermuta(input, estado);
+    if (bloqueo) { console.log(`[buscar_inventario] BLOQUEADO por auto_permuta: ${input.modelo}`); return bloqueo; }
     const anioPedido = input.anio ? parseInt(input.anio, 10) : null;
     const resultados = buscarAutos({ marca: input.marca, modelo: input.modelo, anio: anioPedido });
     if (!resultados.length) {
@@ -217,6 +301,10 @@ async function ejecutarHerramienta(nombre, input, telefono, canal) {
 
   if (nombre === 'enviar_fotos_auto') {
     const { buscarAutos } = require('./database');
+    // Defensa: NO mandar fotos del auto que el cliente tiene en permuta.
+    const estado = obtenerEstadoConversacion(telefono);
+    const bloqueo = bloqueaSiEsAutoPermuta(input, estado);
+    if (bloqueo) { console.log(`[enviar_fotos_auto] BLOQUEADO por auto_permuta: ${input.modelo}`); return bloqueo; }
     const anioPedido = input.anio ? parseInt(input.anio, 10) : null;
     const resultados = buscarAutos({ marca: input.marca, modelo: input.modelo, anio: anioPedido });
 
@@ -386,6 +474,18 @@ INSTRUCCIONES OBLIGATORIAS PARA TU PROXIMA RESPUESTA AL CLIENTE:
       cliente_whatsapp: waCliente,
     });
 
+    // Marcar la etapa como 'derivado' en el estado estructurado. Tambien
+    // poblamos nombre_cliente si no estaba (el LLM lo pasa al escalar).
+    try {
+      actualizarEstadoConversacion(telefono, {
+        etapa: 'derivado',
+        nombre_cliente: nombreCliente,
+        canal,
+      });
+    } catch (err) {
+      console.error('[Agente] No pude marcar etapa=derivado:', err.message);
+    }
+
     // Pausar el bot para esta conversación: el vendedor toma el chat
     const { setSetting, marcarAsignacionNotificada } = require('./database');
     setSetting(`bot_pausado_${telefono}`, 'true');
@@ -447,6 +547,26 @@ ${proxContacto.dentroHorario
     }
   }
 
+  if (nombre === 'actualizar_estado_conversacion') {
+    const parcial = {};
+    if (input.auto_interes && typeof input.auto_interes === 'object') parcial.auto_interes = input.auto_interes;
+    if (input.auto_permuta && typeof input.auto_permuta === 'object') parcial.auto_permuta = input.auto_permuta;
+    if (input.forma_pago) parcial.forma_pago = input.forma_pago;
+    if (input.nombre_cliente && input.nombre_cliente.trim()) parcial.nombre_cliente = input.nombre_cliente.trim();
+    if (input.etapa) parcial.etapa = input.etapa;
+    if (canal) parcial.canal = canal;
+    try {
+      const nuevo = actualizarEstadoConversacion(telefono, parcial);
+      console.log(`[Estado] tel=${telefono} actualizado:`, JSON.stringify({
+        ai: nuevo.auto_interes, ap: nuevo.auto_permuta, fp: nuevo.forma_pago, nom: nuevo.nombre_cliente, et: nuevo.etapa,
+      }));
+      return `ESTADO ACTUALIZADO. Continuá la conversación natural — NO le digas al cliente "actualicé el estado" ni nada técnico. El estado nuevo va a aparecer en el próximo turno bajo "ESTADO DE LA CONVERSACIÓN".`;
+    } catch (err) {
+      console.error('[Estado] Error actualizando:', err.message);
+      return `ESTADO no se pudo actualizar (${err.message}). Igual seguí con la conversación normal — el cliente NO tiene que enterarse de errores técnicos.`;
+    }
+  }
+
   return 'Herramienta no reconocida.';
 }
 
@@ -455,6 +575,43 @@ ${proxContacto.dentroHorario
 // ─────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `Sos Gonzalo, atendés los chats de Procar — una agencia en Corrientes Capital, Argentina. Vendemos AUTOS USADOS y también MOTOS. Si el cliente pregunta por una moto, NUNCA le digas que no manejamos motos — sí manejamos. Tratá la consulta de moto igual que la de un auto: preguntale qué moto le interesa (marca, modelo, cilindrada si la tiene en mente) y, cuando pida algo concreto (precio, financiación, ir a verla), escalá al vendedor.
+
+📋 ESTADO DE LA CONVERSACIÓN — el contrato (LEELO PRIMERO):
+Cada conversación tiene un estado estructurado en la DB con estos campos:
+- auto_interes: el auto que el cliente QUIERE COMPRAR (marca, modelo, año).
+- auto_permuta: el auto que el cliente TIENE para entregar (marca, modelo, año, km, estado).
+- forma_pago: contado | financiado | permuta | mixto.
+- nombre_cliente: el nombre que dio.
+- etapa: prospecto → calificando → calificado → derivado.
+
+Lo ves al inicio del system message en cada turno bajo "ESTADO DE LA CONVERSACIÓN". Es la fuente de verdad — pesa más que tu memoria del historial.
+
+⚠️⚠️⚠️ REGLAS IRROMPIBLES SOBRE EL ESTADO (todas son innegociables):
+
+1) **Distinción auto_interes vs auto_permuta**:
+   - auto_interes = lo que QUIERE COMPRAR. Pistas: "me interesa el X", "tenés Y?", "quiero el Z", "por la publicación del N", auto del anuncio.
+   - auto_permuta = lo que TIENE. Pistas: "tengo un X", "mi X", "el X que tengo", "te entrego mi Y", "permuto el Z", "X en parte de pago".
+   - "tengo un Corolla" → SIEMPRE auto_permuta. Nunca auto_interes, aunque parezca matchear el anuncio.
+
+2) **buscar_inventario y enviar_fotos_auto SOLO usan auto_interes, NUNCA auto_permuta**.
+   Si llamás esas herramientas con la marca/modelo del auto en permuta, te las van a BLOQUEAR con un mensaje "BLOQUEADO_AUTO_PERMUTA". Cuando eso pase, no insistas: el auto del cliente no se busca en stock.
+
+3) **Llamá actualizar_estado_conversacion cada vez que aprendas algo nuevo**, ANTES de responder al cliente. Casos típicos:
+   - Cliente confirma cuál auto le interesa → actualizar auto_interes.
+   - Cliente menciona un auto que tiene → actualizar auto_permuta.
+   - Cliente dice cómo paga (contado/financiado/permuta/mixto) → actualizar forma_pago.
+   - Cliente da su nombre → actualizar nombre_cliente.
+   No tenés que llamarla en cada turno — solo cuando hay info nueva.
+
+4) **Si el estado ya tiene auto_interes definido, NO preguntes "¿qué auto te interesó?"** — ya lo sabés. Arrancá hablando del auto directo.
+
+5) **Auto desde el anuncio**: si el cliente vino respondiendo un anuncio nuestro, auto_interes ya viene auto-cargado del contexto. NO pidas que te repita qué auto. Si la respuesta del cliente es vaga ("info?", "precio?"), asumí que habla del auto que ya está en auto_interes.
+
+6) **PROHIBIDO preguntar de dónde es el cliente** — nada de "¿sos de la zona?", "¿te queda cerca?", "¿estás más lejos?". Esa pregunta no agrega al negocio.
+
+7) **PROHIBIDO confirmar que tomás un auto en permuta** — frases como "te lo tomamos por X", "lo tomamos en Y" están vetadas. Siempre: "el vendedor te confirma el valor de toma cuando lo vea". Vos NO cotizás permutas.
+
+8) **Cuando derives fuera de horario** (lun-sáb 9-13 / 16:30-21, domingo cerrado), siempre aclará al cliente cuándo lo va a contactar el vendedor — el tool result de escalar_a_vendedor te trae el texto exacto a usar.
 
 PERSONALIDAD:
 - Hablás como un correntino normal, sin sobreactuar: "che", "dale", "mirá", "bárbaro", de vez en cuando.
@@ -1178,10 +1335,21 @@ function contextoTemporal() {
 // Devuelve un string con el auto detectado o null si no encontró nada confiable.
 const MODELOS_AUTOS_REGEX = /\b(corolla|hilux|etios|yaris|gol\s*trend|gol|virtus|vento|polo|fox|voyage|suran|amarok|up|t[\s-]?cross|taos|saveiro|nivus|onix|cobalt|spin|cruze|tracker|prisma|aveo|s10|captiva|trailblazer|cronos|argo|toro|mobi|strada|palio|siena|uno|500|ka|fiesta|focus|ecosport|ranger|territory|bronco|sandero|logan|stepway|duster|kangoo|kwid|captur|koleos|alaskan|208|2008|3008|408|partner|c3|c4|c5|berlingo|versa|march|frontier|kicks|x[\s-]?trail|sentra|city|civic|hr[\s-]?v|cr[\s-]?v|fit|accent|tucson|creta|rio|cerato|sportage|seltos|renegade|compass|cherokee|wrangler|wave|glh|ybr|tornado|titan|rouser|xr)\b/i;
 
+// Detecta el auto de INTERES del cliente (lo que quiere comprar) usando solo
+// señales fuertes de interes. NUNCA debe poblar con un auto que el cliente
+// dijo que TIENE — eso es permuta y se carga via la herramienta
+// actualizar_estado_conversacion. La regla del user es estricta acá.
 function extraerAutoDelHistorial(historial) {
   if (!Array.isArray(historial) || historial.length === 0) return null;
 
-  // 1) Marcadores explícitos guardados por webhook.js — son lo más confiable.
+  // Patrones que marcan claramente que el cliente HABLA DE LO QUE TIENE
+  // (permuta) — si la frase entera matchea alguno de estos, NO la usamos
+  // para auto_interes aunque mencione un modelo conocido.
+  const ES_PERMUTA = /\b(tengo|mi (auto|moto|vehiculo|vehículo)|te (entrego|dejo)|para (entregar|permutar)|en parte de pago|permuto|le pongo)\b/i;
+
+  // 1) Marcadores explícitos guardados por webhook.js cuando viene de un
+  //    anuncio nuestro — son lo mas confiable porque el sistema mismo los
+  //    inserta sabiendo que es interes.
   for (const m of historial) {
     const c = (m.contenido || '').trim();
     if (!c) continue;
@@ -1189,22 +1357,40 @@ function extraerAutoDelHistorial(historial) {
     if (pub && pub[1].trim()) return pub[1].trim();
   }
 
-  // 2) Buscar mención de modelo conocido en cualquier mensaje (cliente o bot).
-  //    Si aparece junto a un año plausible (2005-2030), lo concatenamos.
+  // 2) Mensajes del BOT (rol=assistant) que mencionen un modelo. Si Gonzalo
+  //    ya hablo del Corolla, casi seguro era el auto de interes. Los mensajes
+  //    del BOT no pueden ser permuta del cliente.
   for (const m of historial) {
+    if (m.rol !== 'assistant') continue;
     const c = (m.contenido || '').trim();
     if (!c) continue;
     const matchModelo = c.match(MODELOS_AUTOS_REGEX);
     if (!matchModelo) continue;
     const modelo = matchModelo[0];
-    // Buscamos un año en la misma frase (hasta 60 chars alrededor del match)
     const idx = matchModelo.index || 0;
     const ventana = c.slice(Math.max(0, idx - 30), Math.min(c.length, idx + 60));
     const matchYear = ventana.match(/\b(20[0-2]\d)\b/);
     return matchYear ? `${modelo} ${matchYear[1]}` : modelo;
   }
 
-  // 3) Si solo tenemos el marcador genérico de anuncio sin modelo, lo señalamos
+  // 3) Mensajes del CLIENTE (rol=user) que mencionen un modelo, PERO solo si
+  //    NO contienen patrones de permuta. "Me interesa el Corolla" sí, "tengo
+  //    un Corolla" no.
+  for (const m of historial) {
+    if (m.rol !== 'user') continue;
+    const c = (m.contenido || '').trim();
+    if (!c) continue;
+    if (ES_PERMUTA.test(c)) continue; // Skip — ese auto es permuta
+    const matchModelo = c.match(MODELOS_AUTOS_REGEX);
+    if (!matchModelo) continue;
+    const modelo = matchModelo[0];
+    const idx = matchModelo.index || 0;
+    const ventana = c.slice(Math.max(0, idx - 30), Math.min(c.length, idx + 60));
+    const matchYear = ventana.match(/\b(20[0-2]\d)\b/);
+    return matchYear ? `${modelo} ${matchYear[1]}` : modelo;
+  }
+
+  // 4) Si solo tenemos el marcador genérico de anuncio sin modelo, lo señalamos
   //    así Gonzalo al menos sabe que vino de una publi (aunque no de cuál).
   const vinoDeAd = historial.some(m => /\[cliente vino de un anuncio/i.test(m.contenido || ''));
   if (vinoDeAd) return '__SIN_MODELO_PERO_DESDE_ANUNCIO__';
@@ -1212,8 +1398,73 @@ function extraerAutoDelHistorial(historial) {
   return null;
 }
 
+// Renderiza el estado estructurado de la conversacion como bloque del system
+// message. Este reemplaza a contextoAutoDetectado: ahora la fuente de verdad
+// es la tabla estado_conversacion, no una heuristica sobre el historial.
+// Si el estado tiene auto_interes vacio Y el historial tiene un anuncio claro,
+// auto-seedeamos auto_interes desde ahi (regla del user: "si viene de un
+// anuncio, auto_interes se carga automaticamente del contexto").
+function contextoEstadoConversacion(telefono) {
+  try {
+    let estado = obtenerEstadoConversacion(telefono);
+
+    // Auto-seed: si auto_interes esta vacio, tratamos de poblarlo desde el
+    // historial usando extraerAutoDelHistorial (que ahora SOLO extrae cosas
+    // que claramente sean interes, no permuta).
+    if (!estado.auto_interes) {
+      const historial = obtenerHistorial(telefono);
+      const detectado = extraerAutoDelHistorial(historial);
+      if (detectado && detectado !== '__SIN_MODELO_PERO_DESDE_ANUNCIO__') {
+        // Parseamos un texto tipo "Corolla 2020" o "Amarok"
+        const match = String(detectado).match(/^(.+?)(?:\s+(20[0-2]\d))?$/);
+        if (match) {
+          const modelo = match[1].trim();
+          const anio = match[2] ? parseInt(match[2], 10) : null;
+          actualizarEstadoConversacion(telefono, {
+            auto_interes: anio ? { modelo, anio } : { modelo },
+          });
+          console.log(`[Estado] auto-seed auto_interes desde historial: ${modelo}${anio ? ' ' + anio : ''}`);
+          estado = obtenerEstadoConversacion(telefono);
+        }
+      }
+    }
+
+    const lineas = [];
+    lineas.push('\n\nESTADO DE LA CONVERSACIÓN (LEELO ANTES DE RESPONDER — la fuente de verdad de qué quiere el cliente):');
+    if (estado.auto_interes) {
+      const ai = estado.auto_interes;
+      const txt = [ai.marca, ai.modelo, ai.anio].filter(Boolean).join(' ').trim();
+      lineas.push(`- auto_interes (lo que QUIERE COMPRAR): ${txt || '(sin definir)'}`);
+    } else {
+      lineas.push('- auto_interes (lo que QUIERE COMPRAR): (sin definir — averígualo en la charla)');
+    }
+    if (estado.auto_permuta) {
+      const ap = estado.auto_permuta;
+      const partes = [ap.marca, ap.modelo, ap.anio].filter(Boolean).join(' ');
+      const extra = [ap.km ? `${ap.km} km` : null, ap.estado ? `estado: ${ap.estado}` : null].filter(Boolean).join(', ');
+      lineas.push(`- auto_permuta (lo que TIENE para entregar): ${partes}${extra ? ' — ' + extra : ''}`);
+    }
+    if (estado.forma_pago) lineas.push(`- forma_pago: ${estado.forma_pago}`);
+    if (estado.nombre_cliente) lineas.push(`- nombre_cliente: ${estado.nombre_cliente}`);
+    lineas.push(`- etapa: ${estado.etapa || 'prospecto'}`);
+    lineas.push('');
+    lineas.push('Reglas de oro sobre el estado:');
+    lineas.push('- buscar_inventario y enviar_fotos_auto SIEMPRE buscan auto_interes, NUNCA auto_permuta.');
+    lineas.push('- Si el estado ya tiene auto_interes definido, NO le preguntes al cliente "¿qué auto te interesó?" — ya lo sabés.');
+    lineas.push('- Si el cliente menciona algo nuevo (auto que tiene, forma de pago, su nombre), llamá actualizar_estado_conversacion ANTES de responder, así el estado queda al día.');
+    lineas.push('- NUNCA confirmes que tomás el auto en permuta — siempre "el vendedor te confirma el valor de toma".');
+
+    return lineas.join('\n');
+  } catch (err) {
+    console.error('[contextoEstadoConversacion] error:', err.message);
+    return '';
+  }
+}
+
 // Genera el bloque de system prompt con el auto detectado (si lo hay), para
 // inyectarlo en cada llamada al LLM y evitar que Gonzalo pregunte "¿de qué auto?".
+// DEPRECATED: ahora se usa contextoEstadoConversacion. Lo dejamos solo para
+// compatibilidad / fallback de extraerAutoDelHistorial.
 function contextoAutoDetectado(telefono) {
   try {
     const historial = obtenerHistorial(telefono);
@@ -1322,7 +1573,7 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
     max_tokens: 1024,
     system: [
       { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral', ttl: '1h' } },
-      { type: 'text', text: contextoTemporal() + contextoCanalActual(canal) + contextoConversacion(telefono) + contextoAutoDetectado(telefono) },
+      { type: 'text', text: contextoTemporal() + contextoCanalActual(canal) + contextoConversacion(telefono) + contextoEstadoConversacion(telefono) },
     ],
     tools: herramientas,
     messages: mensajes
