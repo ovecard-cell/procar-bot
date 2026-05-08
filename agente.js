@@ -383,6 +383,15 @@ INSTRUCCIONES OBLIGATORIAS PARA TU PRÓXIMA RESPUESTA AL CLIENTE:
           break;
         }
         enviadas++;
+        // Persistir la foto saliente en conversaciones para que el dashboard la
+        // muestre en el panel del vendedor. Sin esto el panel solo veia el
+        // texto del bot ("ahi van las fotos") sin las imagenes — el cliente
+        // las recibia en Messenger pero el vendedor no las podia revisar.
+        try {
+          guardarMensaje({ telefono, rol: 'assistant', contenido: '', canal, tipo: 'imagen', archivo: filename });
+        } catch (errGuardar) {
+          console.error(`[enviar_fotos_auto] no pude persistir ${filename} en conversaciones:`, errGuardar.message);
+        }
       } catch (err) {
         errores.push(`${filename}: ${err.message}`);
       }
@@ -1676,16 +1685,18 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
     .filter(b => b.type === 'text')
     .map(b => b.text)
     .join('');
-  const textoRespuesta = sanitizarSaliente(textoCrudo);
+  let textoRespuesta = sanitizarSaliente(textoCrudo);
 
   // Defensa: si la respuesta termina vacia (modelo se quedo en tool_use loop
   // hasta el limite, o sanitizarSaliente borro todo el texto), logueamos
-  // diagnostico para no repetir el silencio que paso con Nicolas Torres.
+  // diagnostico Y mandamos un fallback fijo asi el cliente no queda en
+  // silencio total (caso real: Cesar 2026-05-08, Nicolas 2026-05-07).
   if (!textoRespuesta || !textoRespuesta.trim()) {
     const usosHerramientas = respuesta.content
       .filter(b => b.type === 'tool_use')
       .map(b => `${b.name}(${JSON.stringify(b.input).slice(0, 120)})`);
     console.error(`[Agente] respuesta vacia para tel=${telefono} canal=${canal} | iteraciones=${iteraciones} stop_reason=${respuesta.stop_reason} | textoCrudo=${JSON.stringify(textoCrudo).slice(0, 200)} | tools=[${usosHerramientas.join(', ')}]`);
+    textoRespuesta = 'Un toque, te confirmo en seguida.';
   }
 
   guardarMensaje({ telefono, rol: 'assistant', contenido: textoRespuesta, canal });
