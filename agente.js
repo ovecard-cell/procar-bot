@@ -812,13 +812,30 @@ CÓMO RESPONDER:
       Cliente: "tengo un Gol Trend"
       Vos: "Bárbaro. ¿Año? ¿Cuántos km? ¿Color? ¿Tenés fotos?"
 
-   PASO 4 — Si dice que QUIERE FINANCIAR:
-   Pedile:
-   - El CUIT.
-   Aclará así:
-   "Pasame tu CUIT así verificamos si calificás al 100% o hasta cuánto te
-    aprueban. Con eso ya vemos si necesitás entregar algo como diferencia o
-    no."
+   PASO 4 — Si dice que QUIERE FINANCIAR (sin auto para entregar):
+   ⚠️ INMEDIATEZ: cuando el cliente confirma que va a financiar y NO menciona
+   nada de permuta (frases tipo "sería financiado", "lo financio", "quiero
+   financiar", "vehículos no tengo así que financiado", "voy a sacar cuotas"),
+   el SIGUIENTE turno tuyo TIENE QUE pedir el CUIL/CUIT. Sin rodeos, sin
+   preguntar nada más antes.
+
+   Frase ancla a usar:
+   "Perfecto, para armar las cuotas necesito tu CUIL — con eso el vendedor
+    chequea con qué banco te aprueban y cuánto. ¿Me lo pasás?"
+
+   Variantes naturales (alterná, no copies textual):
+   - "Dale, pasame tu CUIL/DNI así el vendedor te arma las cuotas exactas."
+   - "Bárbaro. Tirame tu CUIL y el vendedor te tira el plan que mejor te
+      conviene."
+   - "Joya. Para que el vendedor te arme el plan, ¿me pasás el CUIL?"
+
+   ❌ MAL (silencio): no responder al "sería financiado".
+   ❌ MAL (rodeo): "¿Querés saber qué bancos trabajamos?" (ya le dijiste).
+   ❌ MAL (volver a preguntar lo mismo): "¿Lo financiás directo o tenés algo
+      para entregar?" (ya te dijo que NO tiene nada para entregar — no
+      vuelvas atrás).
+   ❌ MAL (calificar de más): pedir presupuesto, pedir entrada, pedir
+      información que el vendedor pide después.
 
    PASO 5 — Si dice que TIENE USADO Y QUIERE FINANCIAR (ambas):
    Hacé las DOS preguntas (datos + foto del usado, Y CUIT).
@@ -1722,6 +1739,26 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
       .filter(b => b.type === 'tool_use')
       .map(b => `${b.name}(${JSON.stringify(b.input).slice(0, 120)})`);
     console.error(`[Agente] respuesta vacia para tel=${telefono} canal=${canal} | iteraciones=${iteraciones} stop_reason=${respuesta.stop_reason} | textoCrudo=${JSON.stringify(textoCrudo).slice(0, 200)} | tools=[${usosHerramientas.join(', ')}]`);
+
+    // Log MUY especifico: si el ultimo mensaje del cliente confirma una forma
+    // de pago (financiado / contado / permuta), Gonzalo deberia haber pedido
+    // CUIL o nombre — quedar en silencio aqui es especialmente costoso
+    // (cliente listo para dar el dato y se va). Marcamos con prefijo distinto
+    // para poder grepear.
+    const ultimoUserMsg = mensajes.filter(m => m.role === 'user').slice(-1)[0];
+    const ultimoUserTexto = (() => {
+      if (!ultimoUserMsg) return '';
+      if (typeof ultimoUserMsg.content === 'string') return ultimoUserMsg.content;
+      if (Array.isArray(ultimoUserMsg.content)) {
+        return ultimoUserMsg.content.filter(b => b.type === 'text').map(b => b.text).join(' ');
+      }
+      return '';
+    })().toLowerCase();
+    const FORMA_PAGO_REGEX = /\b(financi|cuotas?|contado|efectivo|permut|entrega|en\s+parte\s+de\s+pago|al\s+contado|por\s+mes)\b/i;
+    if (FORMA_PAGO_REGEX.test(ultimoUserTexto)) {
+      console.error(`[Agente] CRITICO_FORMA_PAGO_SIN_RESPUESTA tel=${telefono} canal=${canal} | el cliente confirmo forma de pago: "${ultimoUserTexto.slice(0, 200)}" | bot quedo mudo y caera al fallback. Revisar PASO 4/5/6 del prompt.`);
+    }
+
     textoRespuesta = 'Un toque, te confirmo en seguida.';
   }
 

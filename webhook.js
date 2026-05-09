@@ -152,9 +152,19 @@ function manejarEcho({ canal, messaging }) {
   // Detección 2: fingerprint por (recipient + texto) que enviamos en últimos 60s.
   // Esto cubre el caso de Instagram donde Meta descarta la metadata en el echo.
   const matchFingerprint = textoEcho && fueEnviadoPorBot(recipientId, textoEcho);
+  // Detección 3: fingerprint por URL de attachment. Si el bot mando foto/video
+  // via Send API, Meta hace echo del attachment con la misma URL pero SIN
+  // text — sin esta deteccion el echo se interpretaba como humano y pausaba.
+  let matchAttachmentUrl = false;
+  if (Array.isArray(message?.attachments) && message.attachments.length) {
+    const urls = message.attachments.map(a => a?.payload?.url).filter(Boolean);
+    if (urls.length && urls.every(u => fueUrlEnviadaPorBot(recipientId, u))) {
+      matchAttachmentUrl = true;
+    }
+  }
 
-  if (matchMetadata || matchFingerprint) {
-    console.log(`[${canal}] Echo del propio bot ignorado (meta=${matchMetadata}, fp=${matchFingerprint})`);
+  if (matchMetadata || matchFingerprint || matchAttachmentUrl) {
+    console.log(`[${canal}] Echo del propio bot ignorado (meta=${matchMetadata}, fp=${matchFingerprint}, attUrl=${matchAttachmentUrl})`);
     return;
   }
   if (!recipientId) return;
@@ -665,6 +675,26 @@ function fueEnviadoPorBot(recipientId, texto) {
   return RECIENTES_BOT.has(key);
 }
 
+// Mismo fingerprint que el de texto pero por URL de attachment. Cuando el
+// bot manda foto/video via Send API, Meta hace echo del attachment con la
+// misma URL — sin este registro, manejarEcho lo interpretaba como 'humano
+// desde Business Suite' y pausaba al bot (caso real: Nisim Valenzuela
+// 2026-05-09, bot pausado tras mandar 4 fotos del Corolla, no respondio
+// despues a 'sería financiado').
+const RECIENTES_URLS_BOT = new Map();
+function marcarUrlEnviadaPorBot(recipientId, urlPublica) {
+  if (!recipientId || !urlPublica) return;
+  const key = `${recipientId}::${urlPublica}`;
+  const ahora = Date.now();
+  for (const [k, ts] of RECIENTES_URLS_BOT) if (ahora - ts > RECIENTES_TTL_MS) RECIENTES_URLS_BOT.delete(k);
+  RECIENTES_URLS_BOT.set(key, ahora);
+}
+function fueUrlEnviadaPorBot(recipientId, urlPublica) {
+  if (!recipientId || !urlPublica) return false;
+  const key = `${recipientId}::${urlPublica}`;
+  return RECIENTES_URLS_BOT.has(key);
+}
+
 async function enviarInstagram(recipientId, texto) {
   const token = config.INSTAGRAM_ACCESS_TOKEN || config.META_ACCESS_TOKEN;
   const url = config.INSTAGRAM_ACCESS_TOKEN
@@ -738,6 +768,7 @@ async function enviarMessengerMedia(recipientId, urlPublica, tipo) {
       }
     );
     console.log(`[Messenger] ${tipo} enviado OK a ${recipientId}`);
+    marcarUrlEnviadaPorBot(recipientId, urlPublica);
   } catch (err) {
     describirErrorMeta(err, `enviarMessengerMedia(${tipo}) a ${recipientId}`);
     const metaMsg = err.response?.data?.error?.message || err.message;
@@ -770,6 +801,7 @@ async function enviarInstagramMedia(recipientId, urlPublica, tipo) {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     });
     console.log(`[Instagram] ${tipo} enviado OK a ${recipientId}`);
+    marcarUrlEnviadaPorBot(recipientId, urlPublica);
   } catch (err) {
     describirErrorMeta(err, `enviarInstagramMedia(${tipo}) a ${recipientId}`);
     // Re-lanzo con mensaje rico (incluye el motivo real de Meta) para que el
