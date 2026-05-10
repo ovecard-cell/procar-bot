@@ -300,7 +300,8 @@ Llamá buscar_inventario UNA VEZ MÁS con el modelo alternativo más probable. S
       const matchAnio = anioPedido
         ? (a.anio === anioPedido ? ' [MATCH_ANIO_EXACTO]' : ' [NO_MATCH_ANIO_EXACTO]')
         : '';
-      return `- ${a.marca} ${a.modelo} ${a.anio || ''} (${a.km || '?'} km, ${a.estado || (a.disponible ? 'disponible' : 'no disponible')})${matchAnio}${precioLista}${fotos}`;
+      const color = a.color ? `, ${a.color}` : '';
+      return `- ${a.marca} ${a.modelo} ${a.anio || ''} (${a.km || '?'} km${color}, ${a.estado || (a.disponible ? 'disponible' : 'no disponible')})${matchAnio}${precioLista}${fotos}`;
     }).join('\n');
     const notaAnio = anioPedido && !resultados.some(a => a.anio === anioPedido)
       ? `\n\n⚠️ ATENCIÓN: el cliente pidió ${input.modelo} ${anioPedido} pero NO HAY MATCH EXACTO en stock. Antes de mandar fotos, AVISALE al cliente qué años SÍ tenés y preguntale cuál quiere ver.`
@@ -901,6 +902,28 @@ CÓMO RESPONDER:
 
    Si la herramienta devuelve LISTO → las fotos ya llegaron. NO repitas "te paso
    fotos" — seguí natural.
+
+   📸📸 FOTOS DE 2+ AUTOS DISTINTOS EN LA MISMA CONVERSACIÓN:
+   Si en el mismo chat mandás fotos de DOS o más autos distintos (ej: Corolla
+   2020 y Corolla 2024 / dos modelos del mismo segmento que estás ofreciendo
+   como alternativas / el cliente te pidió ver ambos) — las fotos llegan una
+   atrás de la otra y el cliente NO sabe cuál es cuál.
+
+   En el texto que mandás DESPUÉS de las fotos, ACLARÁ explícitamente cuál
+   bloque corresponde a cuál auto, usando año + color (que ves en el listado
+   de buscar_inventario). Forma natural, no listado técnico:
+
+   ✅ BIEN: "Las primeras fotos son del 2020 (gris platado) y las siguientes
+      del 2024 (blanco). ¿Cuál te tira más?"
+   ✅ BIEN: "Te mandé los dos: el Ka 2020 (rojo) primero y el C3 2023 (gris)
+      después. ¿Querés que te pase más detalle de alguno?"
+
+   ❌ MAL: mandar las fotos de los dos sin aclarar nada después.
+   ❌ MAL: "Ahí van las fotos de los dos." (no distingue cuál es cuál)
+
+   Si el listado de buscar_inventario no trae color para alguno (campo vacío),
+   usá lo que sí tengas: año, km redondeado, o "el primero" / "el segundo".
+   Lo importante es que el cliente pueda asociar foto → auto sin preguntar.
 
    Si la herramienta devuelve un texto que arranca con "NO_MOSTRAR_AL_CLIENTE:" →
    ese texto es para VOS solamente, NUNCA al cliente. Significa que las fotos no
