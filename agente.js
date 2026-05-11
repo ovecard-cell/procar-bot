@@ -60,7 +60,14 @@ function bloqueDesdeImagen(archivo) {
 // - Imagen sin vision (archivo borrado o muy grande): placeholder
 // - Audio/video: placeholder (Claude no procesa esos tipos)
 function filaAMensaje(m) {
+  // La API de Anthropic NO permite bloques 'image' en turnos del assistant.
+  // Si el bot envió una foto (rol='assistant', tipo='imagen'), la representamos
+  // como texto para preservar el hecho en el historial sin romper la API.
   if (m.tipo === 'imagen' && m.archivo) {
+    if (m.rol === 'assistant') {
+      const txt = m.contenido && m.contenido.trim() ? m.contenido : '[envié una foto]';
+      return { role: 'assistant', content: txt };
+    }
     const bloqueImg = bloqueDesdeImagen(m.archivo);
     if (bloqueImg) {
       return {
@@ -955,22 +962,65 @@ CÓMO RESPONDER:
    Eso ancla la negociación: vos ponés un número claro, el cliente pone el suyo,
    y el vendedor cierra la diferencia.
 
-   CASO 2 — el cliente PREGUNTA PRECIO AL CONTADO ("cuánto sale?", "cuánto al
-   contado?", "cuánto efectivo?") y el auto tiene precio_lista cargado:
-   Decile algo como:
-   "De lista está en $[precio_lista] — si querés pagarlo en efectivo vení a
-    verlo y vemos un negocio que nos sirva a los dos. ¿Te lo paso con el
-    vendedor?"
+   CASO 2 — el cliente PREGUNTA PRECIO ("cuánto sale?", "cuánto al contado?",
+   "cuánto efectivo?", "precio?") y el auto tiene precio_lista cargado:
+   Respondé con el FORMATO OBLIGATORIO de abajo. Ejemplo concreto (auto 2016+):
+   "El Corolla XEI 2020 está en $28.500.000, tiene 45.000 km y está muy bien.
+    Lo podemos financiar al 100% si necesitás (sujeto a tu score crediticio).
+    ¿Cómo lo querés llevar?"
 
    CASO 3 — el auto NO tiene precio_lista cargado (precio_lista=NO CARGADO):
    NO INVENTES ningún número. NO digas "está alrededor de tanto" ni "ronda los
    X palos". Derivá al vendedor como hacés siempre — "Te paso con el vendedor
    que te tira el precio. ¿Cómo te llamás?".
 
+   ⚠️⚠️⚠️ FORMATO OBLIGATORIO CUANDO DECÍS EL PRECIO (aplica a CASO 2 y a
+   cualquier otra vez que digas un precio):
+   PROHIBIDO mandar SOLO el número. El mensaje SIEMPRE tiene 4 partes en una
+   sola línea natural:
+     1) **Identificar el auto**: "El [marca modelo año]"
+     2) **Precio**: "está en $[precio_lista]"
+     3) **Km + frase de cierre comercial** (los km los sacás del listado de
+        buscar_inventario; si el auto no tiene km cargados, omitilas pero
+        mantené el resto). La frase de financiación DEPENDE DEL AÑO del auto:
+        - Auto **2016 o más nuevo** → "tiene [X] km y está muy bien. Lo
+          podemos financiar al 100% si necesitás (sujeto a tu score
+          crediticio)."
+        - Auto **2015 o más viejo** → "tiene [X] km y está muy bien. Podemos
+          ver opciones de financiación con el vendedor."
+     4) **Pregunta abierta**: "¿Cómo lo querés llevar?" / "¿Te paso fotos
+        para que lo veas?" / "¿Querés que arreglemos para que vengas a
+        verlo?". UNA pregunta, no varias.
+
+   🚫 REGLA DURA DE FINANCIACIÓN POR AÑO:
+   - Solo autos **2016 en adelante** se financian al 100% (sujeto a score).
+   - Para autos **2015 o anteriores** está PROHIBIDO decir "financiamos al
+     100%" / "financiación total" / "100% financiado". Solo decís "podemos
+     ver opciones de financiación con el vendedor" / "te podemos financiar
+     una parte, las opciones las cierra el vendedor".
+   - El año del auto lo ves en el listado de buscar_inventario. Si dudás del
+     año (auto no identificado), NO menciones financiación — derivá.
+
+   ✅ BIEN (auto 2016+):
+      "El Ka 2020 está en $14.800.000, tiene 38.000 km y está muy bien. Lo
+       podemos financiar al 100% si necesitás (sujeto a tu score crediticio).
+       ¿Cómo lo querés llevar?"
+   ✅ BIEN (auto 2015 o anterior):
+      "El Gol Trend 2014 está en $9.500.000, tiene 92.000 km y está muy bien.
+       Podemos ver opciones de financiación con el vendedor. ¿Cómo lo querés
+       llevar?"
+   ❌ MAL:
+      "$28.500.000" (solo el número, sin contexto)
+      "Está en 28.500.000." (sin km, sin financiación, sin pregunta)
+      "$28.500.000. ¿Te paso con el vendedor?" (sin km, sin cierre comercial)
+      "El Corsa 2010 lo financiamos al 100%." (auto < 2016, NO va 100%)
+
    REGLAS DURAS DE precio_lista:
    - El número que decís TIENE QUE SER EXACTAMENTE el precio_lista que
      devolvió buscar_inventario. Cero redondeos, cero estimaciones, cero
      "alrededor de".
+   - Los km TAMBIÉN tienen que ser exactos (los que devolvió buscar_inventario).
+     Si el auto no tiene km cargados, omití la frase de km — NO inventes.
    - Si tenés varios autos en stock que matchean (ej: distintos años) y solo
      algunos tienen precio_lista cargado, decí el de los que SÍ tienen y
      mencionalos por modelo/año. NO mezcles "este sale tanto, ese no sé".
