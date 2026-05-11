@@ -4,7 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { procesarMensaje } = require('./agente');
 const { getSetting, setSetting, MEDIA_DIR, guardarMensaje } = require('./database');
-const { limpiarRecordatorios } = require('./recordatorios');
+const { limpiarRecordatorios, limpiarRescate } = require('./recordatorios');
 const config = require('./config');
 
 // ─────────────────────────────────────────────
@@ -390,6 +390,7 @@ async function recibirMensaje(req, res) {
       const phoneId  = value.metadata.phone_number_id;
 
       limpiarRecordatorios(telefono);
+      limpiarRescate(telefono);
 
       // Texto puro
       if (mensaje.type === 'text') {
@@ -494,6 +495,7 @@ async function recibirMensaje(req, res) {
 
       const senderId = messaging.sender.id;
       limpiarRecordatorios(senderId);
+      limpiarRescate(senderId);
       await manejarMensajeMeta({
         canal: 'instagram',
         senderId,
@@ -540,6 +542,7 @@ async function recibirMensaje(req, res) {
 
       const senderId = messaging.sender.id;
       limpiarRecordatorios(senderId);
+      limpiarRescate(senderId);
       await manejarMensajeMeta({
         canal: 'messenger',
         senderId,

@@ -2060,4 +2060,39 @@ Ejemplos buenos (combinaciones tipo):
   return sanitizarSaliente(crudo) || null;
 }
 
-module.exports = { procesarMensaje, generarRespuestaRescate, generarRecordatorioContextual, enHorarioVendedores, extraerAutoDelHistorial, contextoAutoDetectado };
+// Genera un mensaje de rescate contextual cuando un lead llevó >=4h sin responder
+// y NO tiene vendedor asignado. Lee los últimos 5 mensajes y arma un follow-up
+// que se conecte con lo último que se habló. Prompt fijo, sin variantes de cadencia.
+async function generarMensajeRescateLead(telefono) {
+  const historial = obtenerHistorial(telefono);
+  if (!historial.length) return null;
+  const mensajes = historial.slice(-5).map(filaAMensaje);
+
+  const prompt = `\n\nSITUACIÓN: este cliente está sin respuesta hace más de 4 horas. Tu trabajo ahora es retomar el contacto con UN mensaje corto y natural.
+
+INSTRUCCIONES (prompt fijo de rescate):
+Sos Gonzalo, vendedor de Procar Multimarca en Corrientes. Leé esta conversación y escribí UN mensaje corto y natural para retomar el contacto. El mensaje tiene que conectar con lo último que se habló — si preguntó precio, mencioná el auto; si dijo que tenía un usado, preguntá por ese; si dijo que iba a venir, recordáselo. PROHIBIDO mensajes genéricos tipo "hola cómo estás". Máximo 2 oraciones. Sin presión, sin urgencia.
+
+REGLAS DURAS:
+- NO empieces con "Hola" ni te presentes (ya hablaron).
+- NO uses "che".
+- NO menciones precio, contado, permuta ni financiación si el cliente no lo trajo primero.
+- NO digas "te recuerdo" / "te paso a recordar".
+- Tono argentino casual, en minúscula como WhatsApp normal.
+- Máximo 2 oraciones. Mejor 1.`;
+
+  const respuesta = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 200,
+    system: [
+      { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral', ttl: '1h' } },
+      { type: 'text', text: contextoTemporal() + prompt },
+    ],
+    messages: mensajes,
+  });
+
+  const crudo = respuesta.content.filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  return sanitizarSaliente(crudo) || null;
+}
+
+module.exports = { procesarMensaje, generarRespuestaRescate, generarRecordatorioContextual, generarMensajeRescateLead, enHorarioVendedores, extraerAutoDelHistorial, contextoAutoDetectado };

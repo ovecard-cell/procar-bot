@@ -400,28 +400,182 @@ async function procesarColaDeNotificacionesAVendedores() {
 // Flag para no spamear logs con el error de cuenta no registrada.
 let cuentaNoRegistradaYaLogueado = false;
 
+// ─────────────────────────────────────────────
+// RESCATE DE LEADS (2026-05-10)
+// Reemplaza al viejo procesarRecordatorios (kill-switch 2026-05-06).
+// Logica simple: 1 umbral (4h), max 2 intentos, despues marca 'inactivo'.
+// Si el lead tiene vendedor asignado → alerta vendedor por WA y NO toca al cliente.
+// Si no tiene vendedor → genera mensaje contextual con Haiku y lo manda al cliente.
+// Horario silencioso 00-07 ARG.
+// ─────────────────────────────────────────────
+const RESCATE_UMBRAL_HORAS = 4;
+const RESCATE_MAX_INTENTOS = 2;
+
+function leerEstadoRescate(telefono) {
+  const raw = getSetting(`rescate_${telefono}`, null);
+  if (!raw) return { intentos: 0, ultimo: null, estado: 'activo' };
+  try { return JSON.parse(raw); } catch { return { intentos: 0, ultimo: null, estado: 'activo' }; }
+}
+
+function guardarEstadoRescate(telefono, est) {
+  const valor = JSON.stringify(est);
+  db.prepare(`
+    INSERT INTO settings (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = ?
+  `).run(`rescate_${telefono}`, valor, valor);
+}
+
+function limpiarRescate(telefono) {
+  db.prepare('DELETE FROM settings WHERE key = ?').run(`rescate_${telefono}`);
+}
+
+async function procesarRescateLeads() {
+  if (getSetting('agente_activo', 'true') !== 'true') {
+    console.log('[Rescate-leads] Agente pausado, salteamos vuelta');
+    return;
+  }
+
+  const horaArg = parseInt(new Intl.DateTimeFormat('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hour12: false,
+  }).format(new Date()), 10);
+  if (horaArg >= 0 && horaArg < 7) {
+    console.log(`[Rescate-leads] Horario silencioso (${horaArg}hs), no mando nada`);
+    return;
+  }
+
+  const ahora = Date.now();
+  const HORA = 60 * 60 * 1000;
+
+  // Candidatos: ultimo mensaje del cliente >= 4h atras, ventana 24h Meta abierta,
+  // bot no pausado por humano (eso se chequea por cliente porque tiene vendedor asig).
+  const candidatos = db.prepare(`
+    SELECT c.telefono, c.canal,
+           (SELECT creado_en FROM conversaciones WHERE telefono = c.telefono AND rol = 'user' ORDER BY creado_en DESC LIMIT 1) as ultimo_user_ts,
+           (SELECT contenido FROM conversaciones WHERE telefono = c.telefono AND rol = 'user' ORDER BY creado_en DESC LIMIT 1) as ultimo_user_txt,
+           (SELECT rol FROM conversaciones WHERE telefono = c.telefono ORDER BY creado_en DESC LIMIT 1) as ultimo_rol
+    FROM conversaciones c
+    GROUP BY c.telefono
+  `).all();
+
+  let enviadosCliente = 0, alertasVendedor = 0, marcadosInactivos = 0, errores = 0;
+
+  for (const c of candidatos) {
+    if (!c.ultimo_user_ts) continue;
+    const horasSinResponder = (ahora - new Date(c.ultimo_user_ts).getTime()) / HORA;
+    if (horasSinResponder < RESCATE_UMBRAL_HORAS) continue;
+    if (horasSinResponder >= 24) continue; // ventana Meta cerrada
+    // Si el ultimo mensaje es del cliente, todavia no respondio el bot/vendedor:
+    // tiene sentido rescatar. Si el ultimo es del assistant, tambien aplica
+    // (bot mando algo y el cliente nunca contesto).
+
+    const est = leerEstadoRescate(c.telefono);
+    if (est.estado === 'inactivo') continue;
+    if (est.intentos >= RESCATE_MAX_INTENTOS) {
+      guardarEstadoRescate(c.telefono, { ...est, estado: 'inactivo' });
+      marcadosInactivos++;
+      console.log(`[Rescate-leads] ${c.telefono} marcado inactivo (alcanzo ${est.intentos} intentos)`);
+      continue;
+    }
+    // No reintentar antes de 4h desde el ultimo intento de rescate
+    if (est.ultimo) {
+      const horasDesdeUltimoIntento = (ahora - new Date(est.ultimo).getTime()) / HORA;
+      if (horasDesdeUltimoIntento < RESCATE_UMBRAL_HORAS) continue;
+    }
+
+    // Buscar si el cliente tiene asignacion a vendedor
+    const asig = db.prepare(`
+      SELECT a.id, a.cliente_nombre, v.id as vid, v.nombre as vendedor_nombre,
+             v.telefono as vendedor_telefono, v.activo as vendedor_activo
+      FROM asignaciones a
+      JOIN vendedores v ON v.id = a.vendedor_id
+      WHERE a.cliente_telefono = ?
+      ORDER BY a.creado_en DESC LIMIT 1
+    `).get(c.telefono);
+
+    if (asig && asig.vendedor_activo && asig.vendedor_telefono) {
+      // ─── Lead con vendedor asignado: alerta WhatsApp al vendedor ───
+      const nombreCliente = asig.cliente_nombre || `Cliente ${String(c.telefono).slice(-4)}`;
+      const previewMsg = (c.ultimo_user_txt || '').trim().slice(0, 180);
+      const textoAlerta = previewMsg
+        ? `${asig.vendedor_nombre}, ${nombreCliente} sigue sin respuesta. Último mensaje: "${previewMsg}"`
+        : `${asig.vendedor_nombre}, ${nombreCliente} sigue sin respuesta.`;
+
+      try {
+        const { enviarWhatsAppVendedor } = require('./mensajero');
+        await enviarWhatsAppVendedor(asig.vendedor_telefono, textoAlerta);
+        guardarEstadoRescate(c.telefono, {
+          intentos: est.intentos + 1,
+          ultimo: new Date().toISOString(),
+          estado: est.intentos + 1 >= RESCATE_MAX_INTENTOS ? 'inactivo' : 'activo',
+          tipo: 'alerta_vendedor',
+        });
+        alertasVendedor++;
+        console.log(`[Rescate-leads] Alerta a vendedor ${asig.vendedor_nombre} por ${nombreCliente} (intento ${est.intentos + 1})`);
+      } catch (err) {
+        errores++;
+        console.log(`[Rescate-leads] No pude avisar a ${asig.vendedor_nombre} (WA no disponible): ${err.message}`);
+      }
+      continue;
+    }
+
+    // ─── Sin vendedor asignado: bot manda mensaje contextual al cliente ───
+    // Si el bot esta pausado para esta conversacion (vendedor humano metio mano),
+    // no mandamos nada — respetamos al humano.
+    if (getSetting(`bot_pausado_${c.telefono}`, 'false') === 'true') continue;
+
+    let texto = null;
+    try {
+      const { generarMensajeRescateLead } = require('./agente');
+      texto = await generarMensajeRescateLead(c.telefono);
+    } catch (err) {
+      console.error(`[Rescate-leads] LLM fallo para ${c.telefono}:`, err.message);
+    }
+    if (!texto || !texto.trim()) continue;
+
+    try {
+      await enviarRecordatorio(c, texto);
+      db.prepare('INSERT INTO conversaciones (telefono, rol, contenido, canal) VALUES (?, ?, ?, ?)')
+        .run(c.telefono, 'assistant', texto, c.canal);
+      guardarEstadoRescate(c.telefono, {
+        intentos: est.intentos + 1,
+        ultimo: new Date().toISOString(),
+        estado: est.intentos + 1 >= RESCATE_MAX_INTENTOS ? 'inactivo' : 'activo',
+        tipo: 'mensaje_cliente',
+      });
+      enviadosCliente++;
+      console.log(`[Rescate-leads] Mensaje al cliente ${c.telefono} (${c.canal}, ${horasSinResponder.toFixed(1)}h, intento ${est.intentos + 1})`);
+    } catch (err) {
+      errores++;
+      console.error(`[Rescate-leads] Error enviando a ${c.telefono}:`, err.response?.data?.error?.message || err.message);
+    }
+  }
+
+  if (enviadosCliente || alertasVendedor || marcadosInactivos || errores) {
+    console.log(`[Rescate-leads] Vuelta: ${enviadosCliente} cliente, ${alertasVendedor} vendedor, ${marcadosInactivos} inactivos, ${errores} errores`);
+  }
+}
+
 function iniciarCron() {
-  // Cada 15 minutos: recordatorios al cliente.
-  // Antes acá tambien corria el rescate del bot (que reactivaba a Gonzalo si el
-  // vendedor se colgaba). Lo sacamos: el dashboard ahora muestra alerta visual
-  // al vendedor en vez de meter al bot a la conversacion.
-  // KILL SWITCH (2026-05-06): recordatorios al cliente desactivados temporalmente
-  // porque seguían quemando tokens del LLM y Meta rechazaba los envíos. Mientras
-  // diagnosticamos, dejamos solo la cola de notificaciones a vendedores y el
-  // ping al vendedor (no usa LLM, costo cero de Anthropic).
-  // cron.schedule('*/15 * * * *', () => {
-  //   procesarRecordatorios().catch(err => console.error('[Recordatorios] Crash:', err.message));
-  //   pingearVendedoresColgados().catch(err => console.error('[Ping vendedor] Crash:', err.message));
-  // });
-  cron.schedule('*/15 * * * *', () => {
-    pingearVendedoresColgados().catch(err => console.error('[Ping vendedor] Crash:', err.message));
+  // 2026-05-10: REACTIVADO el rescate de leads.
+  // Reemplaza al viejo procesarRecordatorios (kill switch 2026-05-06) y al
+  // pingearVendedoresColgados (que duplicaba alerta al vendedor con umbral distinto).
+  // Cron unico cada 30min, costo controlado (max 2 intentos por conversacion).
+  cron.schedule('*/30 * * * *', () => {
+    procesarRescateLeads().catch(err => console.error('[Rescate-leads] Crash:', err.message));
   });
-  // Cada 5 minutos chequeamos la cola de notificaciones a vendedores. Es liviano:
-  // si estamos fuera de horario, ni se conecta. Si entramos en horario, vacía la cola.
+  // Cada 5 minutos chequeamos la cola de notificaciones a vendedores (asignaciones
+  // que esperan a que el vendedor se ponga "disponible"). No usa LLM.
   cron.schedule('*/5 * * * *', () => {
     procesarColaDeNotificacionesAVendedores().catch(err => console.error('[Cola WA] Crash:', err.message));
   });
-  console.log('[Recordatorios] Cron iniciado (RECORDATORIOS AL CLIENTE DESACTIVADOS — solo ping vendedor cada 15min y cola WA cada 5min)');
+  console.log('[Recordatorios] Cron iniciado — rescate-leads cada 30min, cola WA cada 5min');
 }
 
-module.exports = { iniciarCron, procesarRecordatorios, limpiarRecordatorios, procesarColaDeNotificacionesAVendedores };
+module.exports = {
+  iniciarCron,
+  procesarRecordatorios,
+  procesarRescateLeads,
+  limpiarRecordatorios,
+  limpiarRescate,
+  procesarColaDeNotificacionesAVendedores,
+};
