@@ -1129,6 +1129,96 @@ app.get('/api/admin/leads-calientes', (req, res) => {
   }
 });
 
+// Leads del canal web — lista historica (default 30 dias, configurable con ?dias=N).
+// Solo los que dejaron numero de WhatsApp real. Ordenados por actividad reciente.
+app.get('/api/admin/leads-web', (req, res) => {
+  try {
+    const { db } = require('./database');
+    const dias = Math.max(1, Math.min(365, parseInt(req.query.dias, 10) || 30));
+    const desdeISO = new Date(Date.now() - dias * 24 * 3600 * 1000).toISOString();
+
+    const filas = db.prepare(`
+      SELECT c.telefono, c.canal,
+             cl.nombre as nombre_clientes,
+             cl.whatsapp as wa_clientes,
+             ec.nombre_cliente as nombre_estado,
+             ec.etapa as etapa_estado,
+             ec.auto_interes as auto_interes_json,
+             (SELECT MAX(creado_en) FROM conversaciones WHERE telefono = c.telefono) as ultimo_msg,
+             a.cliente_nombre as asig_nombre,
+             a.etapa as asig_etapa,
+             a.cliente_whatsapp as asig_wa,
+             v.nombre as vendedor_nombre
+      FROM (SELECT DISTINCT telefono, canal FROM conversaciones WHERE canal = 'web' AND creado_en >= ?) c
+      LEFT JOIN clientes cl ON cl.telefono = c.telefono
+      LEFT JOIN estado_conversacion ec ON ec.telefono = c.telefono
+      LEFT JOIN (
+        SELECT cliente_telefono, MAX(id) as max_id FROM asignaciones GROUP BY cliente_telefono
+      ) am ON am.cliente_telefono = c.telefono
+      LEFT JOIN asignaciones a ON a.id = am.max_id
+      LEFT JOIN vendedores v ON v.id = a.vendedor_id
+    `).all(desdeISO);
+
+    const ETAPAS_CERRADAS = new Set(['vendido', 'perdido']);
+    const ahora = Date.now();
+    const leads = [];
+
+    for (const f of filas) {
+      const etapa = (f.asig_etapa || f.etapa_estado || 'prospecto').toLowerCase();
+      if (ETAPAS_CERRADAS.has(etapa)) continue;
+
+      const wa = f.asig_wa || f.wa_clientes || null;
+      if (!wa) continue; // solo leads CON WhatsApp
+
+      const nombre = f.asig_nombre || f.nombre_clientes || f.nombre_estado || '(sin nombre)';
+
+      let autoInteres = null;
+      try {
+        if (f.auto_interes_json) {
+          const ai = JSON.parse(f.auto_interes_json);
+          autoInteres = [ai.marca, ai.modelo, ai.anio].filter(Boolean).join(' ').trim() || null;
+        }
+      } catch { /* ignore */ }
+
+      const tsBase = f.ultimo_msg;
+      const horasAtras = tsBase ? (ahora - new Date(tsBase).getTime()) / 3600000 : 0;
+      const h = Math.floor(horasAtras);
+      const d = Math.floor(h / 24);
+      const hace = d >= 1
+        ? `${d}d ${h % 24}h`
+        : h >= 1 ? `${h}h` : `${Math.floor(horasAtras * 60)}min`;
+
+      // Normalizar WhatsApp para wa.me: solo digitos, sin +, sin espacios, sin guiones.
+      const waLimpio = String(wa).replace(/\D/g, '');
+
+      leads.push({
+        telefono: f.telefono,
+        nombre,
+        whatsapp: wa,
+        whatsapp_normalizado: waLimpio,
+        auto_interes: autoInteres,
+        ultimo_mensaje_ts: tsBase,
+        hace,
+        horas_atras: Math.round(horasAtras * 10) / 10,
+        etapa,
+        vendedor_asignado: f.vendedor_nombre || null,
+      });
+    }
+
+    leads.sort((a, b) => a.horas_atras - b.horas_atras); // mas reciente arriba
+
+    res.json({
+      generado: new Date().toISOString(),
+      ventana_dias: dias,
+      total: leads.length,
+      leads,
+    });
+  } catch (err) {
+    console.error('[Leads-web] Error:', err.message, err.stack);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Vendedor escribe al cliente desde el dashboard
 app.post('/api/conversacion/:telefono/enviar', async (req, res) => {
   try {

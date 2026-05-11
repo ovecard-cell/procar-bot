@@ -175,6 +175,24 @@
 </div>
 
 <div style="padding: 0 24px 16px;">
+  <div class="panel" style="background:#0d2a1a; padding:16px; border-radius:12px; border:1px solid #25d366;">
+    <h2 style="font-size:0.95rem; padding:0 0 12px 0; background:transparent; border:none; display:flex; align-items:center; justify-content:space-between; gap:8px; color:#9fe9a4;">
+      <span>🌐 LEADS WEB — dejaron su WhatsApp</span>
+      <span style="display:flex; align-items:center; gap:8px;">
+        <select id="leadsWebDias" onchange="cargarLeadsWeb()" style="background:#1a1a2e; color:#ccc; border:1px solid #25d366; border-radius:6px; padding:3px 8px; font-size:0.75rem;">
+          <option value="7">7 días</option>
+          <option value="30" selected>30 días</option>
+          <option value="90">90 días</option>
+          <option value="365">1 año</option>
+        </select>
+        <span id="leadsWebBadge" style="font-size:0.8rem; padding:4px 12px; border-radius:10px; background:#25d366; color:#0d2a1a; font-weight:700;">0</span>
+      </span>
+    </h2>
+    <div id="leadsWeb" style="display:flex; flex-direction:column; gap:8px;"><div style="color:#888; font-size:0.8rem;">Cargando…</div></div>
+  </div>
+</div>
+
+<div style="padding: 0 24px 16px;">
   <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
     <h2 style="font-size:0.85rem; padding:0 0 12px 0; background:transparent; border:none; display:flex; align-items:center; justify-content:space-between; gap:8px;">
       <span>🛒 MARKETPLACE (Facebook)</span>
@@ -963,6 +981,47 @@
   }
   cargarLeadsAbandonados();
   setInterval(cargarLeadsAbandonados, 15000);
+
+  async function cargarLeadsWeb() {
+    try {
+      const dias = document.getElementById('leadsWebDias')?.value || 30;
+      const r = await fetch('/api/admin/leads-web?dias=' + dias);
+      const data = await r.json();
+      const cont = document.getElementById('leadsWeb');
+      const badge = document.getElementById('leadsWebBadge');
+      badge.textContent = data.total;
+      badge.style.background = data.total === 0 ? '#444' : '#25d366';
+      badge.style.color = data.total === 0 ? '#ccc' : '#0d2a1a';
+      if (data.total === 0) {
+        cont.innerHTML = '<div style="color:#9fe9a4; font-size:0.85rem;">Sin leads web con WhatsApp en los últimos ' + dias + ' días.</div>';
+        return;
+      }
+      cont.innerHTML = data.leads.map(l => {
+        const auto = l.auto_interes ? `· 🚗 ${escapar(l.auto_interes)}` : '';
+        const waLink = l.whatsapp_normalizado ? `https://wa.me/${l.whatsapp_normalizado}` : null;
+        const etapaColor = l.etapa === 'derivado' ? '#C9A84C' : l.etapa === 'contactado' ? '#3a6ea5' : '#666';
+        return `
+        <div style="display:flex; align-items:center; gap:12px; padding:12px; background:#162a1f; border-radius:8px; border-left:4px solid #25d366;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:600; color:#eee; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <span>${escapar(l.nombre)}</span>
+              <span style="font-size:0.65rem; padding:2px 6px; border-radius:4px; background:${etapaColor}; color:#fff; font-weight:600;">${escapar(l.etapa)}</span>
+              ${l.vendedor_asignado ? `<span style="font-size:0.7rem; color:#888;">→ ${escapar(l.vendedor_asignado)}</span>` : ''}
+            </div>
+            <div style="font-size:0.78rem; color:#aaa; margin-top:3px;">⏱ hace ${escapar(l.hace)} ${auto}</div>
+          </div>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <button onclick="abrirConv('${escapar(l.telefono)}')" style="background:#3a6ea5; color:#fff; border:none; padding:7px 12px; border-radius:6px; cursor:pointer; font-size:0.75rem; font-weight:600;">💬 Ver chat</button>
+            ${waLink ? `<a href="${waLink}" target="_blank" style="display:inline-flex; align-items:center; gap:5px; background:#25d366; color:#0d2a1a; padding:7px 12px; border-radius:6px; text-decoration:none; font-size:0.75rem; font-weight:700;">📱 ${escapar(l.whatsapp)}</a>` : `<span style="color:#888; font-size:0.75rem;">sin WA</span>`}
+          </div>
+        </div>`;
+      }).join('');
+    } catch (err) {
+      document.getElementById('leadsWeb').innerHTML = '<div style="color:#e63946; font-size:0.8rem;">Error cargando leads web: ' + escapar(err.message) + '</div>';
+    }
+  }
+  cargarLeadsWeb();
+  setInterval(cargarLeadsWeb, 30000);
 
   // === Marketplace ===
   let mpUltimoLogTs = 0;
