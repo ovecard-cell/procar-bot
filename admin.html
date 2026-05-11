@@ -123,21 +123,12 @@
   <button id="btnDispo" class="btn-disponibilidad entrar">— —</button>
 </div>
 
-<!-- BARRA DE RESUMEN POR VENDEDOR -->
-<div id="barraVendedores" style="padding: 12px 24px 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
-  <div style="color:#888; font-size:0.8rem;">Cargando vendedores...</div>
-</div>
+<!-- ═══════════════════════════════════════════════════════════════
+     ORDEN: Header → Métricas → Leads urgentes → Vendedores → Herramientas
+     ═══════════════════════════════════════════════════════════════ -->
 
-<div class="nav-links">
-  <a id="linkEmbudo" href="/admin/embudo">🪜 Embudo de leads</a>
-  <a id="linkInventario" href="/admin/inventario">📦 Inventario</a>
-  <a href="/analizar?desde=2026-04-20" target="_blank">📊 Análisis con Claude</a>
-  <a href="/distribuir?desde=2026-04-20" target="_blank">📤 Distribuir a vendedores</a>
-  <a href="/demo" target="_blank">💬 Probar Gonzalo</a>
-  <button class="actualizar" onclick="cargarTodo()">↻ Refrescar</button>
-</div>
-
-<div class="stats" id="stats">
+<!-- 1️⃣ MÉTRICAS GLOBALES (arriba del todo, primer vistazo) -->
+<div class="stats" id="stats" style="padding-top: 16px;">
   <div class="stat"><div class="num" id="numMensajes">—</div><div class="label">Mensajes hoy</div></div>
   <div class="stat"><div class="num" id="numClientes">—</div><div class="label">Clientes únicos</div></div>
   <div class="stat"><div class="num" id="numLeads">—</div><div class="label">Leads guardados</div></div>
@@ -145,25 +136,7 @@
   <div class="stat"><div class="num" id="canalTop" style="font-size:1.4rem">—</div><div class="label">Canal más activo</div></div>
 </div>
 
-<div style="padding: 0 24px 16px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;">
-  <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
-    <h2 style="font-size:0.85rem; padding:0 0 12px 0; background:transparent; border:none;">📊 ACTIVIDAD POR CANAL</h2>
-    <div id="statsCanal">—</div>
-  </div>
-  <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
-    <h2 style="font-size:0.85rem; padding:0 0 12px 0; background:transparent; border:none;">👥 ASIGNACIONES POR VENDEDOR</h2>
-    <div id="bulkVendedores" style="display:none; gap:6px; margin-bottom:10px;">
-      <button onclick="bulkVendedores('activar')" style="flex:1; background:#2a9d8f; color:white; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.75rem; font-weight:600;">🟢 Activar todos</button>
-      <button onclick="bulkVendedores('pausar')" style="flex:1; background:#e63946; color:white; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.75rem; font-weight:600;">🔴 Pausar todos</button>
-    </div>
-    <div id="statsVendedores">—</div>
-  </div>
-  <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
-    <h2 style="font-size:0.85rem; padding:0 0 12px 0; background:transparent; border:none;">📤 ÚLTIMOS PASADOS A VENDEDOR</h2>
-    <div id="ultimasAsignaciones">—</div>
-  </div>
-</div>
-
+<!-- 2️⃣ LEADS URGENTES (lo segundo que se ve) -->
 <div style="padding: 0 24px 16px;">
   <div class="panel" style="background:#2a0d12; padding:16px; border-radius:12px; border:1px solid #e63946;">
     <h2 style="font-size:0.95rem; padding:0 0 12px 0; background:transparent; border:none; display:flex; align-items:center; justify-content:space-between; gap:8px; color:#ff6b78;">
@@ -192,6 +165,32 @@
   </div>
 </div>
 
+<!-- 3️⃣ VENDEDORES (resumen + asignaciones) -->
+<div id="barraVendedores" style="padding: 0 24px 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
+  <div style="color:#888; font-size:0.8rem;">Cargando vendedores...</div>
+</div>
+
+<div style="padding: 0 24px 16px;">
+  <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
+    <h2 style="font-size:0.85rem; padding:0 0 12px 0; background:transparent; border:none;">👥 ASIGNACIONES POR VENDEDOR</h2>
+    <div id="bulkVendedores" style="display:none; gap:6px; margin-bottom:10px;">
+      <button onclick="bulkVendedores('activar')" style="flex:1; background:#2a9d8f; color:white; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.75rem; font-weight:600;">🟢 Activar todos</button>
+      <button onclick="bulkVendedores('pausar')" style="flex:1; background:#e63946; color:white; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.75rem; font-weight:600;">🔴 Pausar todos</button>
+    </div>
+    <div id="statsVendedores">—</div>
+  </div>
+</div>
+
+<!-- 4️⃣ HERRAMIENTAS (nav + marketplace) -->
+<div class="nav-links">
+  <a id="linkEmbudo" href="/admin/embudo">🪜 Embudo de leads</a>
+  <a id="linkInventario" href="/admin/inventario">📦 Inventario</a>
+  <a href="/analizar?desde=2026-04-20" target="_blank">📊 Análisis con Claude</a>
+  <a href="/distribuir?desde=2026-04-20" target="_blank">📤 Distribuir a vendedores</a>
+  <a href="/demo" target="_blank">💬 Probar Gonzalo</a>
+  <button class="actualizar" onclick="cargarTodo()">↻ Refrescar</button>
+</div>
+
 <div style="padding: 0 24px 16px;">
   <div class="panel" style="background:#1a1a2e; padding:16px; border-radius:12px;">
     <h2 style="font-size:0.85rem; padding:0 0 12px 0; background:transparent; border:none; display:flex; align-items:center; justify-content:space-between; gap:8px;">
@@ -207,6 +206,23 @@
     </div>
     <div id="mpLogs" style="background:#0d0d1a; color:#9fe9a4; padding:10px; border-radius:6px; font-family:monospace; font-size:0.7rem; height:180px; overflow-y:auto; white-space:pre-wrap;">—</div>
   </div>
+</div>
+
+<!-- 5️⃣ INFO SECUNDARIA COLAPSABLE (no es urgente del día) -->
+<div style="padding: 0 24px 16px;">
+  <details style="background:#1a1a2e; border-radius:12px; padding: 4px 16px;">
+    <summary style="cursor:pointer; padding:12px 0; font-size:0.85rem; color:#C9A84C; font-weight:600; user-select:none;">📊 Más métricas — actividad por canal y últimos pasados a vendedor</summary>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 8px 0 16px;">
+      <div style="background:#0d0d1a; padding:14px; border-radius:8px;">
+        <h2 style="font-size:0.85rem; padding:0 0 10px 0; background:transparent; border:none;">📊 ACTIVIDAD POR CANAL</h2>
+        <div id="statsCanal">—</div>
+      </div>
+      <div style="background:#0d0d1a; padding:14px; border-radius:8px;">
+        <h2 style="font-size:0.85rem; padding:0 0 10px 0; background:transparent; border:none;">📤 ÚLTIMOS PASADOS A VENDEDOR</h2>
+        <div id="ultimasAsignaciones">—</div>
+      </div>
+    </div>
+  </details>
 </div>
 
 <div class="layout">
