@@ -297,9 +297,22 @@ Llamá buscar_inventario UNA VEZ MÁS con el modelo alternativo más probable. S
     }
     const lista = resultados.slice(0, 5).map(a => {
       const fotos = (a.fotos && a.fotos.length) ? ` — ${a.fotos.length} foto(s)` : '';
-      const precioLista = a.precio_lista
-        ? ` — precio_lista=$${Number(a.precio_lista).toLocaleString('es-AR')}`
-        : ' — precio_lista=NO CARGADO';
+      // PRECIO QUE GONZALO PUEDE MENCIONAR:
+      // Prioridad 1: precio_lista (cargado manualmente, "precio público").
+      // Prioridad 2: precio real del campo `precio` (fallback automático).
+      // Si AMBOS son 0/null → señal de bloqueo HARD para que el bot NUNCA invente.
+      let precioMostrar = null;
+      let precioFuente = null;
+      if (a.precio_lista && a.precio_lista > 0) {
+        precioMostrar = a.precio_lista;
+        precioFuente = 'lista';
+      } else if (a.precio && a.precio > 0) {
+        precioMostrar = a.precio;
+        precioFuente = 'fallback_precio';
+      }
+      const precioLista = precioMostrar
+        ? ` — precio=$${Number(precioMostrar).toLocaleString('es-AR')} [fuente:${precioFuente}]`
+        : ' — ⛔ PRECIO_NO_PUBLICABLE — PROHIBIDO MENCIONAR CUALQUIER NÚMERO DE PRECIO PARA ESTE AUTO. DERIVÁ AL VENDEDOR SIN DAR CIFRAS.';
       // match_anio: si el cliente pidio año y este resultado matchea exacto, lo
       // marcamos asi Gonzalo sabe cual es. Sin esto Haiku tomaba el primero
       // (que con el ORDER BY ABS(anio-?) ahora es el mas cercano, pero si pidio
@@ -313,7 +326,13 @@ Llamá buscar_inventario UNA VEZ MÁS con el modelo alternativo más probable. S
     const notaAnio = anioPedido && !resultados.some(a => a.anio === anioPedido)
       ? `\n\n⚠️ ATENCIÓN: el cliente pidió ${input.modelo} ${anioPedido} pero NO HAY MATCH EXACTO en stock. Antes de mandar fotos, AVISALE al cliente qué años SÍ tenés y preguntale cuál quiere ver.`
       : '';
-    return `STOCK ENCONTRADO (${resultados.length} resultado/s, ordenados por cercanía al año pedido):\n${lista}${notaAnio}\n\nPodés confirmar al cliente que el auto está, mandar fotos si pide, y avanzar la conversación. Si el auto tiene precio_lista cargado y aplica el caso, podés decírselo según las reglas de PRECIO DE LISTA del prompt. Si dice NO CARGADO, NUNCA inventes un número — derivá al vendedor.`;
+    return `STOCK ENCONTRADO (${resultados.length} resultado/s, ordenados por cercanía al año pedido):\n${lista}${notaAnio}\n\nPodés confirmar al cliente que el auto está, mandar fotos si pide, y avanzar la conversación.
+
+PRECIO — REGLAS DURAS:
+- Si el auto muestra "precio=$X [fuente:lista]" → ese ES el precio de lista oficial cargado por el vendedor. Podés mencionarlo según las reglas de PRECIO DE LISTA del prompt.
+- Si el auto muestra "precio=$X [fuente:fallback_precio]" → es el precio real del campo interno. Tratalo IGUAL que precio_lista (es un número real, no inventado): podés mencionarlo siguiendo las mismas reglas y formato obligatorio (auto + precio + km + frase de cierre + pregunta).
+- Si el auto muestra "⛔ PRECIO_NO_PUBLICABLE" → PROHIBIDO mencionar cualquier número. Derivá al vendedor sin dar cifras. NUNCA inventes, NUNCA estimes, NUNCA digas "está alrededor de".
+- El número que mencionás TIENE que ser EXACTAMENTE el que devolvió el tool. Cero redondeos.`;
   }
 
   if (nombre === 'enviar_fotos_auto') {
@@ -974,27 +993,41 @@ CÓMO RESPONDER:
    precio cambia según la operación. El precio cerrado lo da el vendedor humano
    cuando ya tiene toda la info (forma de pago, permuta a evaluar, financiación).
 
-   🏷️ EXCEPCIÓN — PRECIO DE LISTA cargado en inventario:
-   Cuando uses buscar_inventario, en la respuesta vas a ver "precio_lista=$X" o
-   "precio_lista=NO CARGADO" para cada auto. Eso cambia cómo respondés en dos
-   situaciones específicas:
+   🏷️ EXCEPCIÓN — PRECIO cargado en inventario:
+   Cuando uses buscar_inventario, en la respuesta de cada auto vas a ver UNA
+   de estas tres formas del precio:
 
-   CASO 1 — el cliente DICE QUE TIENE UN AUTO PARA ENTREGAR (permuta) y el auto
-   nuestro tiene precio_lista cargado:
+     1) "precio=$X [fuente:lista]" → precio_lista oficial cargado.
+     2) "precio=$X [fuente:fallback_precio]" → precio real del campo interno
+        (es un número CORRECTO de la DB, no inventado).
+     3) "⛔ PRECIO_NO_PUBLICABLE" → AMBOS campos vacíos. PROHIBIDO MENCIONAR
+        CUALQUIER NÚMERO.
+
+   ⚠️⚠️⚠️ REGLA CRÍTICA — NÚMERO EXACTO:
+   El precio que digas TIENE QUE SER EXACTAMENTE el número $X que devolvió el
+   tool. Cero redondeos, cero estimaciones, cero "alrededor de", cero "ronda
+   los", cero "más o menos". Si el tool dijo $19.900.000 decís $19.900.000.
+   Si el tool dijo ⛔ PRECIO_NO_PUBLICABLE, NO decís número — derivás.
+   INVENTAR UN PRECIO QUE NO COINCIDE CON EL INVENTARIO ES EL PEOR ERROR
+   POSIBLE: arruina la confianza del cliente y compromete a la concesionaria.
+
+   CASO 1 — el cliente DICE QUE TIENE UN AUTO PARA ENTREGAR (permuta) y el
+   auto nuestro tiene precio (lista o fallback):
    En vez de la pregunta genérica de calificación, decile algo como:
-   "Buenísimo, lo podemos recibir. El precio de lista del [marca modelo año] es
-    $[precio_lista] — ¿cuánto querés por tu auto?"
-   Eso ancla la negociación: vos ponés un número claro, el cliente pone el suyo,
-   y el vendedor cierra la diferencia.
+   "Buenísimo, lo podemos recibir. El precio del [marca modelo año] es
+    $[precio EXACTO del tool] — ¿cuánto querés por tu auto?"
+   Eso ancla la negociación: vos ponés un número claro, el cliente pone el
+   suyo, y el vendedor cierra la diferencia.
 
    CASO 2 — el cliente PREGUNTA PRECIO ("cuánto sale?", "cuánto al contado?",
-   "cuánto efectivo?", "precio?") y el auto tiene precio_lista cargado:
+   "cuánto efectivo?", "precio?") y el auto tiene precio (lista o fallback):
    Respondé con el FORMATO OBLIGATORIO de abajo. Ejemplo concreto (auto 2016+):
-   "El Corolla XEI 2020 está en $28.500.000, tiene 45.000 km y está muy bien.
-    Lo podemos financiar al 100% si necesitás (sujeto a tu score crediticio).
-    ¿Cómo lo querés llevar?"
+   "El Ka 2020 está en $19.900.000, tiene 50.000 km y está muy bien. Lo podemos
+    financiar al 100% si necesitás (sujeto a tu score crediticio). ¿Cómo lo
+    querés llevar?"
+   (El número $19.900.000 sale del tool. NO LO CAMBIES.)
 
-   CASO 3 — el auto NO tiene precio_lista cargado (precio_lista=NO CARGADO):
+   CASO 3 — el auto tiene "⛔ PRECIO_NO_PUBLICABLE" (ambos campos en cero):
    NO INVENTES ningún número. NO digas "está alrededor de tanto" ni "ronda los
    X palos". Derivá al vendedor como hacés siempre — "Te paso con el vendedor
    que te tira el precio. ¿Cómo te llamás?".
@@ -1040,19 +1073,23 @@ CÓMO RESPONDER:
       "$28.500.000. ¿Te paso con el vendedor?" (sin km, sin cierre comercial)
       "El Corsa 2010 lo financiamos al 100%." (auto < 2016, NO va 100%)
 
-   REGLAS DURAS DE precio_lista:
-   - El número que decís TIENE QUE SER EXACTAMENTE el precio_lista que
-     devolvió buscar_inventario. Cero redondeos, cero estimaciones, cero
-     "alrededor de".
+   REGLAS DURAS DEL PRECIO:
+   - El número que decís TIENE QUE SER EXACTAMENTE el "precio=$X" que devolvió
+     buscar_inventario, sin importar si la fuente es `lista` o `fallback_precio`.
+     Cero redondeos, cero estimaciones, cero "alrededor de". INVENTAR UN NÚMERO
+     QUE NO COINCIDE CON EL TOOL ES ERROR GRAVE.
    - Los km TAMBIÉN tienen que ser exactos (los que devolvió buscar_inventario).
      Si el auto no tiene km cargados, omití la frase de km — NO inventes.
    - Si tenés varios autos en stock que matchean (ej: distintos años) y solo
-     algunos tienen precio_lista cargado, decí el de los que SÍ tienen y
+     algunos tienen precio publicable, decí el de los que SÍ tienen y
      mencionalos por modelo/año. NO mezcles "este sale tanto, ese no sé".
+   - Si para algún auto el tool devolvió "⛔ PRECIO_NO_PUBLICABLE", para ESE
+     auto NO menciones número y derivá. Pero si OTRO auto en la misma búsqueda
+     SÍ tiene precio, ése sí lo decís.
    - Estos casos SOLO aplican cuando ya identificaste el auto del que habla
      el cliente. Si la conversación está vaga ("info?", "precio?") sin auto
      puntual, primero seguís el flujo de identificar el auto.
-   - Después de decir el precio_lista, igual derivás al vendedor para cerrar
+   - Después de decir el precio, igual derivás al vendedor para cerrar
      (especialmente en CASO 1 cuando el cliente te tire su número).
 
    🚫🚫🚫 NUNCA INVENTAR DATOS TÉCNICOS DEL AUTO:
@@ -1294,8 +1331,9 @@ CÓMO RESPONDER:
    Cuando el cliente en UN solo mensaje te dice qué auto QUIERE COMPRAR Y
    qué auto TIENE para entregar (con o sin financiación), respondé con
    TODO en UN SOLO mensaje, en este orden:
-     1) **Precio de lista del auto de interés** — si buscar_inventario te
-        devolvió precio_lista=$X cargado, decilo. Si dice NO CARGADO, saltealo
+     1) **Precio del auto de interés** — si buscar_inventario te devolvió
+        "precio=$X [fuente:lista]" o "precio=$X [fuente:fallback_precio]",
+        decilo EXACTO. Si devolvió "⛔ PRECIO_NO_PUBLICABLE", saltealo
         (no inventes, no digas "está alrededor", no preguntes).
      2) **Aclaración sobre el usado** — "el vendedor cotiza tu auto cuando
         lo vea" / "el aproximado lo cierra el vendedor cuando lo revisa".
