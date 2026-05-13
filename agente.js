@@ -1075,7 +1075,7 @@ CÓMO RESPONDER:
 
    REGLAS DURAS DEL PRECIO:
    - El número que decís TIENE QUE SER EXACTAMENTE el "precio=$X" que devolvió
-     buscar_inventario, sin importar si la fuente es `lista` o `fallback_precio`.
+     buscar_inventario, sin importar si la fuente es 'lista' o 'fallback_precio'.
      Cero redondeos, cero estimaciones, cero "alrededor de". INVENTAR UN NÚMERO
      QUE NO COINCIDE CON EL TOOL ES ERROR GRAVE.
    - Los km TAMBIÉN tienen que ser exactos (los que devolvió buscar_inventario).
