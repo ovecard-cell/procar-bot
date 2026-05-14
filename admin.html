@@ -584,10 +584,27 @@
     });
   }
 
+  // Track de qué conversación se cargó por última vez, para distinguir
+  // primer-load (auto-scroll al final) vs refresh (respetar posición).
+  let ultimaConvCargada = null;
+
   async function cargarMensajes(telefono) {
     const res = await fetch('/api/conversacion/' + encodeURIComponent(telefono));
     const data = await res.json();
     const cont = document.getElementById('mensajes');
+
+    // ─── SMART AUTO-SCROLL ──────────────────────────────────────────────
+    // Antes de re-renderizar, medir si el vendedor está cerca del final
+    // (umbral 80px = comportamiento estándar tipo WhatsApp/Telegram).
+    // Si es la primera vez que abre ESTA conversación, scroll al final.
+    // Si está al final del chat, scroll al final tras el render (mensajes
+    // nuevos visibles). Si scrolleó arriba para leer, preservar posición.
+    const esPrimerLoad = telefono !== ultimaConvCargada;
+    const distanciaAlFondo = cont.scrollHeight - cont.scrollTop - cont.clientHeight;
+    const cercaDelFondo = distanciaAlFondo < 80;
+    const scrollPrevio = cont.scrollTop;
+    // ────────────────────────────────────────────────────────────────────
+
     const partes = [`Conversación con ${data.nombre || telefono}`];
     if (data.cuil) partes.push(`📋 CUIL: ${data.cuil}`);
     if (data.presupuesto) partes.push(`💰 USD ${data.presupuesto}`);
@@ -660,7 +677,16 @@
       }
       return `<div class="msg ${e.rol}">${cuerpo}<div class="meta">${formatearFecha(e.creado_en)}</div></div>`;
     }).join('');
-    cont.scrollTop = cont.scrollHeight;
+
+    // Decisión final de scroll según el estado detectado al inicio:
+    //   - Primer load O estaba al final → bajar al último mensaje.
+    //   - Estaba scrolleado arriba leyendo → mantener su posición.
+    if (esPrimerLoad || cercaDelFondo) {
+      cont.scrollTop = cont.scrollHeight;
+    } else {
+      cont.scrollTop = scrollPrevio;
+    }
+    ultimaConvCargada = telefono;
   }
 
   async function toggleAgente() {
