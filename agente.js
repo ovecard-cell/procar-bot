@@ -348,7 +348,7 @@ PRECIO — REGLAS DURAS:
     // enterarse de que hubo una limitación técnica. Gonzalo pivotea natural.
     const pivotarASinFotos = (motivo, contexto = '') => {
       console.log(`[enviar_fotos_auto] FALLBACK silencioso: ${motivo}${contexto ? ' — ' + contexto : ''}`);
-      return `NO_MOSTRAR_AL_CLIENTE: ${motivo}. INSTRUCCIONES PARA TU PRÓXIMA RESPUESTA: NO menciones que no pudiste mandar fotos. NO digas "no puedo enviarte fotos por acá" ni "hubo un problema" ni nada técnico. Pivoteá natural pidiendo el nombre del cliente para derivar al vendedor, como si fuera tu decisión normal del flujo. Ej: "Dale, te paso con el vendedor que tiene el detalle completo y las fotos. ¿Cómo te llamás?"`;
+      return `NO_MOSTRAR_AL_CLIENTE: ${motivo}. ⚠️ AHORA mismo, EN ESTE MISMO TURNO, generá texto de respuesta al cliente (NO termines el turno sin texto). NO menciones que no pudiste mandar fotos. NO digas "no puedo enviarte fotos por acá" ni "hubo un problema" ni nada técnico. Pivoteá natural pidiendo el nombre del cliente para derivar al vendedor, como si fuera tu decisión normal del flujo. Ej: "Dale, te paso con el vendedor que tiene el detalle completo y las fotos. ¿Cómo te llamás?"`;
     };
 
     if (!resultados.length) {
@@ -369,7 +369,7 @@ PRECIO — REGLAS DURAS:
         console.log(`[enviar_fotos_auto] año ${anioPedido} no existe en stock, años disponibles: ${anios.join(', ')}`);
         return `NO_MANDAR_FOTOS_TODAVIA: el cliente pidió ${input.modelo} ${anioPedido}, pero ESE AÑO NO EXISTE en stock. Años disponibles del ${input.modelo}: ${lista}.
 
-INSTRUCCIONES OBLIGATORIAS PARA TU PRÓXIMA RESPUESTA AL CLIENTE:
+⚠️ AHORA mismo, EN ESTE MISMO TURNO, generá texto de respuesta al cliente con estas instrucciones (NO termines el turno sin texto):
 - AVISALE PRIMERO que el ${anioPedido} no lo tenés.
 - Decile qué años SÍ tenés (los de la lista de arriba).
 - Preguntale si quiere ver alguno de esos.
@@ -454,7 +454,7 @@ INSTRUCCIONES OBLIGATORIAS PARA TU PRÓXIMA RESPUESTA AL CLIENTE:
       console.log(`[Agente] Escalado web bloqueado para ${telefono}: falta whatsapp_cliente`);
       return `NO_ESCALAR_TODAVIA: el cliente vino por el widget de la web y NO te dio el WhatsApp. Sin ese numero el vendedor no lo puede contactar.
 
-INSTRUCCIONES OBLIGATORIAS PARA TU PROXIMA RESPUESTA AL CLIENTE:
+⚠️ AHORA mismo, EN ESTE MISMO TURNO, generá texto de respuesta al cliente (NO termines el turno sin texto):
 - Pedile el numero de WhatsApp de forma natural y amable.
 - Ejemplo: "Dale, ¿me dejas tu numero de WhatsApp asi te escribimos directamente?"
 - NO escales todavia. Cuando el cliente te pase el numero, recien ahi llamas escalar_a_vendedor de nuevo con whatsapp_cliente lleno.`;
@@ -566,7 +566,7 @@ INSTRUCCIONES OBLIGATORIAS PARA TU PROXIMA RESPUESTA AL CLIENTE:
       const ejemploFuera = `Listo, ya queda con ${vendedor.nombre} — como ahora estamos fuera de horario, te escribe ${proxContacto.texto}. Cualquier cosa me avisás.`;
       return `ESCALADO OK. VENDEDOR ASIGNADO: "${vendedor.nombre}". Ya se le mandó un WhatsApp con los datos del cliente. HORARIO ACTUAL: ${proxContacto.dentroHorario ? 'DENTRO de horario de atencion (9-13 / 16:30-20:30 lun-sab)' : 'FUERA de horario de atencion'}. PROXIMO CONTACTO DEL VENDEDOR AL CLIENTE: ${proxContacto.texto}.
 
-INSTRUCCIONES OBLIGATORIAS PARA TU PRÓXIMA RESPUESTA AL CLIENTE:
+⚠️ AHORA mismo, EN ESTE MISMO TURNO, generá el texto de cierre al cliente con estas instrucciones (NO termines el turno sin texto):
 - Usá EXACTAMENTE el nombre "${vendedor.nombre}" en el mensaje. PROHIBIDO decir "el vendedor" generico.
 - Incluí EXACTAMENTE el texto "${proxContacto.texto}" para que el cliente sepa cuando lo van a contactar.
 ${proxContacto.dentroHorario
@@ -581,7 +581,7 @@ ${proxContacto.dentroHorario
         : `Listo, lo tomó ${vendedor.nombre} — como ahora estamos fuera de horario, te escribe ${proxContacto.texto}. Cualquier cosa me avisás.`;
       return `ESCALADO OK. VENDEDOR ASIGNADO: "${vendedor.nombre}". Está fuera de turno — la notificación por WhatsApp se manda en cuanto vuelva. HORARIO ACTUAL: ${proxContacto.dentroHorario ? 'DENTRO' : 'FUERA'} de horario de atencion. PROXIMO CONTACTO DEL VENDEDOR AL CLIENTE: ${proxContacto.texto}.
 
-INSTRUCCIONES OBLIGATORIAS PARA TU PRÓXIMA RESPUESTA AL CLIENTE:
+⚠️ AHORA mismo, EN ESTE MISMO TURNO, generá el texto de cierre al cliente con estas instrucciones (NO termines el turno sin texto):
 - Usá EXACTAMENTE el nombre "${vendedor.nombre}" en el mensaje. PROHIBIDO decir "el vendedor" generico.
 - Incluí EXACTAMENTE el texto "${proxContacto.texto}" para que el cliente sepa cuando lo van a contactar.
 ${proxContacto.dentroHorario
@@ -605,7 +605,7 @@ ${proxContacto.dentroHorario
       console.log(`[Estado] tel=${telefono} actualizado:`, JSON.stringify({
         ai: nuevo.auto_interes, ap: nuevo.auto_permuta, fp: nuevo.forma_pago, nom: nuevo.nombre_cliente, et: nuevo.etapa,
       }));
-      return `ESTADO ACTUALIZADO. Continuá la conversación natural — NO le digas al cliente "actualicé el estado" ni nada técnico. El estado nuevo va a aparecer en el próximo turno bajo "ESTADO DE LA CONVERSACIÓN".`;
+      return `ESTADO ACTUALIZADO. ⚠️ AHORA mismo, EN ESTE MISMO TURNO, generá texto de respuesta al cliente. NO termines el turno sin texto — eso dispara el fallback robótico "Un toque, te confirmo en seguida" que delata al bot. Avanzá el flujo según lo que el cliente acaba de decir: si confirmó financiar (forma_pago='financiado'), pedí el CUIL con la frase ancla del PASO 4; si confirmó permuta (auto_permuta cargado), pedí los datos del usado + nombre; si dijo contado, pedí el nombre y derivá; etc. NO le digas al cliente "actualicé el estado" ni nada técnico — el cambio de estado es interno.`;
     } catch (err) {
       console.error('[Estado] Error actualizando:', err.message);
       return `ESTADO no se pudo actualizar (${err.message}). Igual seguí con la conversación normal — el cliente NO tiene que enterarse de errores técnicos.`;
@@ -1403,19 +1403,22 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
     console.error(`[Agente] respuesta vacia para tel=${telefono} canal=${canal} | iteraciones=${iteraciones} stop_reason=${respuesta.stop_reason} | textoCrudo=${JSON.stringify(textoCrudo).slice(0, 200)} | tools=[${usosHerramientas.join(', ')}]`);
 
     // Log MUY especifico: si el ultimo mensaje del cliente confirma una forma
-    // de pago (financiado / contado / permuta), Gonzalo deberia haber pedido
-    // CUIL o nombre — quedar en silencio aqui es especialmente costoso
-    // (cliente listo para dar el dato y se va). Marcamos con prefijo distinto
-    // para poder grepear.
-    const ultimoUserMsg = mensajes.filter(m => m.role === 'user').slice(-1)[0];
-    const ultimoUserTexto = (() => {
-      if (!ultimoUserMsg) return '';
-      if (typeof ultimoUserMsg.content === 'string') return ultimoUserMsg.content;
-      if (Array.isArray(ultimoUserMsg.content)) {
-        return ultimoUserMsg.content.filter(b => b.type === 'text').map(b => b.text).join(' ');
-      }
-      return '';
-    })().toLowerCase();
+    // de pago (financiado / contado / permuta / negacion de permuta), Gonzalo
+    // deberia haber pedido CUIL o nombre — quedar en silencio aqui es
+    // especialmente costoso (cliente listo para dar el dato y se va).
+    //
+    // FIX: leemos el ultimo mensaje user directamente de la DB. El array
+    // 'mensajes' tras un tool_use loop tiene tool_results al final (no es
+    // texto del cliente), por eso antes nunca matcheaba aunque el cliente
+    // hubiese dicho cosas como "no tengo ningun auto".
+    let ultimoUserTexto = '';
+    try {
+      const { db } = require('./database');
+      const ultimoUserDB = db.prepare(
+        "SELECT contenido FROM conversaciones WHERE telefono = ? AND rol = 'user' ORDER BY id DESC LIMIT 1"
+      ).get(telefono);
+      ultimoUserTexto = (ultimoUserDB?.contenido || '').toLowerCase();
+    } catch { /* noop */ }
     // Regex que detecta señales de forma de pago — incluye negaciones de
     // permuta tipo "no tengo (ningun) auto/nada" que en contexto de calificacion
     // equivalen a "financiar sin permuta" y deberian gatillar PASO 4 (pedir CUIL).
