@@ -699,10 +699,22 @@ UNA sola pregunta abierta conversacional. NO checklist ("¿año? ¿km? ¿color? 
 - Única excepción: si dice solo "tengo un auto" sin modelo, repreguntá UNA vez: "¿Qué modelo es?".
 
 PASO 4 — Si va a FINANCIAR (sin permuta):
-INMEDIATEZ. Tu siguiente turno pide CUIL/DNI sin rodeos:
-"Perfecto, para armar las cuotas necesito tu CUIL — con eso el vendedor chequea con qué banco te aprueban y cuánto. ¿Me lo pasás?"
+INMEDIATEZ. Tu siguiente turno pide CUIL/DNI sin rodeos.
+
+⚠️ TRIGGERS de PASO 4 (cualquiera de estas señales = el cliente va a financiar SIN permuta — pedí CUIL al toque):
+- Frases directas: "sería financiado", "lo financio", "quiero financiar", "voy a sacar cuotas", "necesito cuotas", "cómo es la financiación".
+- Negaciones de permuta DESPUÉS de tu pregunta de calificación: "no tengo ningún auto", "no tengo auto", "no tengo nada para entregar", "no tengo vehículo", "vehículos no tengo", "no tengo nada", "no", "no, solo financiar", "sin auto para entregar".
+- IMPORTANTE: estas negaciones SOLO califican como PASO 4 cuando vienen DESPUÉS de que vos preguntaste "¿tenés algún auto para entregar o lo financiás?" o similar. En ese contexto, "no tengo nada" = "no tengo nada para entregar = financiar".
+
+Frase ancla: "Perfecto, para armar las cuotas necesito tu CUIL — con eso el vendedor chequea con qué banco te aprueban y cuánto. ¿Me lo pasás?"
 Variantes: "Dale, pasame tu CUIL/DNI así el vendedor te arma las cuotas exactas." / "Joya. Tirame tu CUIL y el vendedor te tira el plan que mejor te conviene."
-❌ MAL: silencio al "sería financiado", volver a preguntar "¿lo financiás directo o tenés algo para entregar?" (ya te dijo), pedir presupuesto/entrada.
+
+✅ EJEMPLO BIEN (caso clásico):
+   Vos (turno previo): "¿Cómo lo querés comprar? ¿Tenés algún auto para entregar o lo financiás?"
+   Cliente: "No tengo ningún auto"
+   Vos: actualizar_estado_conversacion({forma_pago:'financiado'}) + "Perfecto, para armar las cuotas necesito tu CUIL — con eso el vendedor chequea con qué banco te aprueban. ¿Me lo pasás?"
+
+❌ MAL: silencio al "no tengo ningún auto" / volver a preguntar "¿lo financiás directo o tenés algo para entregar?" (ya te dijo que no tiene nada) / pedir presupuesto/entrada.
 
 PASO 5 — Si tiene USADO Y QUIERE FINANCIAR (ambas): hacé las dos (datos del usado + CUIL).
 
@@ -1379,7 +1391,10 @@ async function procesarMensaje(telefono, mensajeUsuario, canal, opciones = {}) {
       }
       return '';
     })().toLowerCase();
-    const FORMA_PAGO_REGEX = /\b(financi|cuotas?|contado|efectivo|permut|entrega|en\s+parte\s+de\s+pago|al\s+contado|por\s+mes)\b/i;
+    // Regex que detecta señales de forma de pago — incluye negaciones de
+    // permuta tipo "no tengo (ningun) auto/nada" que en contexto de calificacion
+    // equivalen a "financiar sin permuta" y deberian gatillar PASO 4 (pedir CUIL).
+    const FORMA_PAGO_REGEX = /\b(financi|cuotas?|contado|efectivo|permut|entrega|en\s+parte\s+de\s+pago|al\s+contado|por\s+mes|no\s+tengo\s+(ning[uú]n\s+)?(auto|veh[ií]culo|moto|nada|nada\s+para\s+entregar)|veh[ií]culos?\s+no\s+tengo|sin\s+(auto|veh[ií]culo)\s+(para\s+entregar)?)\b/i;
     if (FORMA_PAGO_REGEX.test(ultimoUserTexto)) {
       console.error(`[Agente] CRITICO_FORMA_PAGO_SIN_RESPUESTA tel=${telefono} canal=${canal} | el cliente confirmo forma de pago: "${ultimoUserTexto.slice(0, 200)}" | bot quedo mudo y caera al fallback. Revisar PASO 4/5/6 del prompt.`);
     }
