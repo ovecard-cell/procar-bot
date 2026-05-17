@@ -1017,6 +1017,82 @@ app.get('/api/admin/analisis-conversaciones', (req, res) => {
   }
 });
 
+// Eficiencia de conversaciones - ultimas 72h. Endpoint temporal de analisis.
+// Borrar despues de tomar la decision de optimizacion.
+app.get('/api/admin/eficiencia', (req, res) => {
+  try {
+    const { db } = require('./database');
+
+    const top = db.prepare(`
+      SELECT
+        telefono,
+        COUNT(*) AS total_mensajes,
+        SUM(CASE WHEN rol='user' THEN 1 ELSE 0 END) AS msgs_cliente,
+        SUM(CASE WHEN rol='assistant' THEN 1 ELSE 0 END) AS msgs_bot,
+        MIN(creado_en) AS inicio,
+        MAX(creado_en) AS fin
+      FROM conversaciones
+      WHERE creado_en > datetime('now', '-3 days')
+      GROUP BY telefono
+      HAVING msgs_bot > 0
+      ORDER BY total_mensajes DESC
+      LIMIT 30
+    `).all();
+
+    const agregados = db.prepare(`
+      SELECT
+        COUNT(DISTINCT telefono) AS total_conversaciones,
+        AVG(cant) AS promedio_msgs_por_conv,
+        MAX(cant) AS max_msgs
+      FROM (
+        SELECT telefono, COUNT(*) AS cant
+        FROM conversaciones
+        WHERE creado_en > datetime('now', '-3 days')
+        GROUP BY telefono
+      )
+    `).get();
+
+    const top3 = top.slice(0, 3).map(t => t.telefono);
+    const detalle = [];
+    for (const tel of top3) {
+      const cliente = db.prepare('SELECT nombre, canal FROM clientes WHERE telefono = ?').get(tel);
+      const ultimos = db.prepare(`
+        SELECT rol, contenido, tipo, archivo, creado_en
+        FROM conversaciones
+        WHERE telefono = ?
+        ORDER BY creado_en DESC
+        LIMIT 10
+      `).all(tel).reverse();
+      const asignacion = db.prepare(`
+        SELECT a.cliente_nombre, a.vehiculo_interes, a.motivo, a.etapa, a.creado_en,
+               v.nombre as vendedor_nombre
+        FROM asignaciones a
+        LEFT JOIN vendedores v ON v.id = a.vendedor_id
+        WHERE a.cliente_telefono = ?
+        ORDER BY a.creado_en DESC LIMIT 1
+      `).get(tel);
+      detalle.push({
+        telefono: tel,
+        cliente_nombre: cliente?.nombre || null,
+        canal: cliente?.canal || null,
+        asignacion: asignacion || null,
+        ultimos_10_mensajes: ultimos
+      });
+    }
+
+    res.json({
+      generado: new Date().toISOString(),
+      ventana: 'ultimas 72h',
+      agregados,
+      top30: top,
+      detalle_top3: detalle
+    });
+  } catch (err) {
+    console.error('[Eficiencia] Error:', err.message);
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
+
 // Lista de leads calientes de las ultimas 48hs para arrancar la jornada.
 // "Caliente" = tiene nombre o numero de contacto Y no cerro (etapa != vendido/
 // perdido). Ordenado por antiguedad: los que mas esperan primero.
